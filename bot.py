@@ -1178,38 +1178,60 @@ async def handle_new_username(message: types.Message, state: FSMContext):
     cert_path = f"/etc/openvpn/client/keys/{old_username}.crt"
     days_left = get_cert_expiry_days(cert_path)
 
-    await message.answer(f"Удаляем старый профиль: <b>{old_username}</b>...", parse_mode="HTML")
+    # Храним id сообщений в списке
+    msgs_to_delete = []
+
+    m1 = await message.answer(f"Удаляем старый профиль: <b>{old_username}</b>...", parse_mode="HTML")
+    msgs_to_delete.append((m1.chat.id, m1.message_id))
+
     result_del = await execute_script("2", old_username)
     if result_del["returncode"] != 0:
-        await message.answer(f"❌ Ошибка удаления старого профиля: {result_del['stderr']}")
+        m2 = await message.answer(f"❌ Ошибка удаления старого профиля: {result_del['stderr']}")
+        msgs_to_delete.append((m2.chat.id, m2.message_id))
+        await asyncio.sleep(1)
+        for cid, mid in msgs_to_delete:
+            try:
+                await bot.delete_message(cid, mid)
+            except Exception:
+                pass
         await state.clear()
         return
 
-    await message.answer(f"Создаём новый профиль: <b>{new_username}</b> на {days_left} дней...", parse_mode="HTML")
+    m3 = await message.answer(f"Создаём новый профиль: <b>{new_username}</b> на {days_left} дней...", parse_mode="HTML")
+    msgs_to_delete.append((m3.chat.id, m3.message_id))
+
     result_add = await execute_script("1", new_username, str(days_left))
     if result_add["returncode"] != 0:
-        await message.answer(f"❌ Ошибка создания нового профиля: {result_add['stderr']}")
+        m4 = await message.answer(f"❌ Ошибка создания нового профиля: {result_add['stderr']}")
+        msgs_to_delete.append((m4.chat.id, m4.message_id))
+        await asyncio.sleep(1)
+        for cid, mid in msgs_to_delete:
+            try:
+                await bot.delete_message(cid, mid)
+            except Exception:
+                pass
         await state.clear()
         return
 
-    # Сохраняем новое имя профиля в базе
-    save_profile_name(message.from_user.id, new_username)
-    await safe_send_message(
-        ADMIN_ID,
-        f"✏️ <b>Смена имени профиля</b>\n"
-        f"Пользователь: <a href='tg://user?id={message.from_user.id}'>{message.from_user.id}</a> (@{message.from_user.username})\n"
-        f"Старое имя: <code>{old_username}</code>\n"
-        f"Новое имя: <code>{new_username}</code>",
-        parse_mode="HTML"
-    )
+    m5 = await message.answer("Перегенерируем все профили...")
+    msgs_to_delete.append((m5.chat.id, m5.message_id))
 
-    await message.answer("Перегенерируем все профили...")
     await execute_script("7")
+
+    await asyncio.sleep(1)
+    for cid, mid in msgs_to_delete:
+        try:
+            await bot.delete_message(cid, mid)
+        except Exception:
+            pass
+
+    # Главная разница — вычисляем is_admin один раз:
+    is_admin = (message.from_user.id == ADMIN_ID)
     await message.answer(
         "✅ Имя профиля успешно изменено!\n\n"
         "Теперь вы можете скачать новый конфиг через меню кнопкой 📥 <b>Получить конфиг OpenVPN</b>.",
         parse_mode="HTML",
-        reply_markup=create_user_menu(new_username)
+        reply_markup=create_user_menu(new_username, back_callback="users_menu", is_admin=is_admin)
     )
     await state.clear()
 
