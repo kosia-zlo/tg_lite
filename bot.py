@@ -1178,7 +1178,6 @@ async def handle_new_username(message: types.Message, state: FSMContext):
     cert_path = f"/etc/openvpn/client/keys/{old_username}.crt"
     days_left = get_cert_expiry_days(cert_path)
 
-    # Храним id сообщений в списке
     msgs_to_delete = []
 
     m1 = await message.answer(f"Удаляем старый профиль: <b>{old_username}</b>...", parse_mode="HTML")
@@ -1225,15 +1224,17 @@ async def handle_new_username(message: types.Message, state: FSMContext):
         except Exception:
             pass
 
-    # Главная разница — вычисляем is_admin один раз:
+    # ВОТ ЗДЕСЬ -- отправка меню, которое исчезнет только по твоей логике удаления last_menu
     is_admin = (message.from_user.id == ADMIN_ID)
-    await message.answer(
+    msg = await message.answer(
         "✅ Имя профиля успешно изменено!\n\n"
         "Теперь вы можете скачать новый конфиг через меню кнопкой 📥 <b>Получить конфиг OpenVPN</b>.",
         parse_mode="HTML",
         reply_markup=create_user_menu(new_username, back_callback="users_menu", is_admin=is_admin)
     )
+    set_last_menu_id(message.from_user.id, msg.message_id)
     await state.clear()
+
 
 def get_cert_expiry_days_for_user(client_name):
     cert_path = f"/etc/openvpn/client/keys/{client_name}.crt"
