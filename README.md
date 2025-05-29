@@ -107,3 +107,9 @@ journalctl -u vpnbot -f
 ```
 
 
+Надеюсь ничего не забыл. Сорри если это так. После запуска должны создаться файлы в /root/
+approved_users.txt
+pending_users.json
+users.txt
+vpn.db
+
