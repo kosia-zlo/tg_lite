@@ -125,3 +125,8 @@ journalctl -u vpnbot -f
 
   Им нужно будет дать права
 
+  СКРИНЫ
+  ![Иллюстрация к проекту](https://github.com/VATAKATru61/TG-Bot-OpenVPN-Antizapret/blob/main/main.jpg)
+  ![Иллюстрация к проекту](https://github.com/VATAKATru61/TG-Bot-OpenVPN-Antizapret/blob/main/user.jpg)
+  ![Иллюстрация к проекту](https://github.com/VATAKATru61/TG-Bot-OpenVPN-Antizapret/blob/main/config.jpg)
+
