@@ -100,6 +100,10 @@ sudo systemctl status vpnbot
 ```
 sudo systemctl start vpnbot
 ```
+Перезапуск бота
+```
+sudo systemctl restart vpnbot
+```
 
 Просмотр статуса сервиса
 ```
