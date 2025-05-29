@@ -1,4 +1,4 @@
-# TG-Bot-OpenVPN-Antizaprret
+# TG-Bot-OpenVPN-Antizapret
 Что умеет бот
 Управлять пользователями (Удалять, добавлять, изменять)
 Смотреть кто онлайн
