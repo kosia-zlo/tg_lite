@@ -349,7 +349,7 @@ async def update_bot_description():
         await bot.set_my_description(BOT_DESCRIPTION, language_code="ru")
 
 
-BOT_ABOUT = "Бот для пользования услугами VPN от БичиVPN."
+BOT_ABOUT = "ВСТАВЬ СВОЕ"
 
 
 async def update_bot_about():
@@ -736,8 +736,15 @@ async def confirm_delete_user(callback: types.CallbackQuery):
     client_name = callback.data.split("_", 2)[-1]
     result = await execute_script("2", client_name)
     if result["returncode"] == 0:
-        await callback.message.delete()  # <--- удаляем старое меню
-        await bot.send_message(callback.from_user.id, f"✅ Пользователь <b>{client_name}</b> удалён.", reply_markup=create_main_menu())
+        await callback.message.delete()  # удаляем старое меню
+        msg = await bot.send_message(callback.from_user.id, f"✅ Пользователь <b>{client_name}</b> удалён.", parse_mode="HTML")
+        await asyncio.sleep(1)
+        try:
+            await bot.delete_message(msg.chat.id, msg.message_id)
+        except Exception:
+            pass
+        # Можешь здесь вызвать главное меню или другое действие
+        await bot.send_message(callback.from_user.id, "Главное меню:", reply_markup=create_main_menu())
     else:
         await callback.message.edit_text(f"❌ Ошибка удаления: {result['stderr']}", reply_markup=create_main_menu())
     await callback.answer()
