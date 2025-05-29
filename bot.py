@@ -782,25 +782,39 @@ def create_openvpn_menu():
 
 @dp.callback_query(lambda c: c.data == "rename_cancel")
 async def rename_cancel(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
     # Удаляем сообщение с "Введите новое имя…" (если оно всё еще есть)
     try:
         await callback.message.delete()
     except Exception:
         pass
 
-    # Отправляем уведомление и сразу удаляем его через 2 секунды
+    # Отправляем уведомление и сразу удаляем его через 1 секунду
     msg = await bot.send_message(
-        callback.from_user.id,
+        user_id,
         "❌ Переименование отменено."
     )
     await asyncio.sleep(1)
     try:
-        await bot.delete_message(callback.from_user.id, msg.message_id)
+        await bot.delete_message(user_id, msg.message_id)
     except Exception:
         pass
 
+    # Возврат меню пользователя (если знаем имя профиля)
+    data = await state.get_data()
+    old_username = data.get("old_username")
+    if old_username:
+        # Тут нужно вызвать меню пользователя. Можно взять is_admin как callback.from_user.id == ADMIN_ID
+        menu_msg = await bot.send_message(
+            user_id,
+            "Меню пользователя:",
+            reply_markup=create_user_menu(old_username, back_callback="users_menu", is_admin=(user_id == ADMIN_ID))
+        )
+        set_last_menu_id(user_id, menu_msg.message_id)
+
     await state.clear()
     await callback.answer()
+
 
 
 
