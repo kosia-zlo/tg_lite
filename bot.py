@@ -127,7 +127,7 @@ if not ADMIN_ID:
 ADMIN_ID = int(ADMIN_ID)
 
 ITEMS_PER_PAGE = 5
-AUTHORIZED_USERS = [ADMIN_ID]  # Список Telegram ID пользователей
+AUTHORIZED_USERS = [ADMIN_ID, 111111111]  # Список Telegram ID пользователей
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
@@ -162,11 +162,21 @@ class VPNSetup(StatesGroup):
 
 # Описание для вашего бота
 BOT_DESCRIPTION = """
-ВСТАВЬ СВОЕ
+👴🕶️ БичиVPN — bi4i.ru
+
+⚡ VPN-бот для своих:
+— 🧑‍💻 Ебейший VPN который обходит только заблокированные сервисы
+— 🕳️ Генерация конфигов OpenVPN прям в Боте
+— 🧾 Статистика на хуй никому не нужная
+— 🪣 МБ будет Vless позже)
+
+Как получить VPN?
+🪪 Жми /start, отправляй заявку, жди одобрения!
+
+🟣https://bi4i.ru/install/ Инструкция по установке и подключению
 """
 
-# Описание для вашего бота короткое
-BOT_SHORT_DESCRIPTION = "ВСТАВЬ СВОЕ"
+BOT_SHORT_DESCRIPTION = "👴🕶️ БичиVPN — приватный VPN за минуту! bi4i.ru"
 
 
 def user_registered(user_id):
@@ -278,8 +288,8 @@ async def update_bot_description():
     async with Bot(token=BOT_TOKEN) as bot:
         await bot.set_my_description(BOT_DESCRIPTION, language_code="ru")
 
-# Описание для вашего бота в описании профиля
-BOT_ABOUT = "ВСТАВЬ СВОЕ"
+
+BOT_ABOUT = "Бот для пользования услугами VPN от БичиVPN."
 
 
 async def update_bot_about():
@@ -326,27 +336,52 @@ def get_server_info():
 
 def create_main_menu():
     keyboard = [
-        [
-            InlineKeyboardButton(text="👥 Управление пользователями", callback_data="users_menu"),
-            InlineKeyboardButton(text="➕➖ Добавить или удалить", callback_data="add_del_menu"),
-        ],
-        [
-            InlineKeyboardButton(text="♻️ Пересоздать файлы", callback_data="7"),
-            InlineKeyboardButton(text="📦 Создать бэкап", callback_data="8"),
-        ],
-        [
-            InlineKeyboardButton(text="👀 Кто в сети", callback_data="who_online"),
-        ]
+        [InlineKeyboardButton(text="👥 Управление пользователями", callback_data="users_menu")],
+        [InlineKeyboardButton(text="➕➖ Добавить или удалить", callback_data="add_del_menu")],
+        [InlineKeyboardButton(text="♻️ Пересоздать файлы", callback_data="7")],
+        [InlineKeyboardButton(text="📦 Создать бэкап", callback_data="8")],
+        [InlineKeyboardButton(text="📋 Заявки на одобрение", callback_data="admin_pending_list")],
+        [InlineKeyboardButton(text="🛠 Управление сервером", callback_data="server_manage_menu")],
+        [InlineKeyboardButton(text="📢 Объявление", callback_data="announce_menu")],
     ]
-    # Только для админа
-    if ADMIN_ID:
-        keyboard.append(
-            [InlineKeyboardButton(text="📋 Заявки на одобрение", callback_data="admin_pending_list")]
-        )
-        keyboard.append(
-            [InlineKeyboardButton(text="📢 Объявление", callback_data="announce_menu")]
-        )
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def create_server_manage_menu():
+    keyboard = [
+        [InlineKeyboardButton(text="🔄 Перезагрузить сервер", callback_data="reboot_server")],
+        [InlineKeyboardButton(text="🔁 Перезапустить бота", callback_data="restart_bot")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+@dp.callback_query(lambda c: c.data == "server_manage_menu")
+async def server_manage_menu(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Нет доступа!", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "🛠 <b>Управление сервером:</b>", 
+        reply_markup=create_server_manage_menu(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data == "restart_bot")
+async def restart_bot(callback: types.CallbackQuery):
+    msg = await callback.message.answer("♻️ Перезапускаю бота через systemd...")
+    await callback.answer()
+    await asyncio.sleep(2)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+    # Теперь через отдельный процесс делаем задержку и рестарт
+    os.system("nohup bash -c 'sleep 1 && systemctl restart vpnbot.service' &")
+
+
+
 
 @dp.callback_query(lambda c: c.data == "admin_pending_list")
 async def show_pending_list(callback: types.CallbackQuery):
@@ -433,10 +468,17 @@ async def recreate_files(callback: types.CallbackQuery):
             await callback.message.delete()
         except Exception:
             pass
-        await bot.send_message(callback.from_user.id, "Главное меню:", reply_markup=create_main_menu())
+        # Делаем с инфой сервера если админ
+        if callback.from_user.id == ADMIN_ID:
+            stats = get_server_info()
+            menu_text = stats + "\n<b>Главное меню:</b>"
+        else:
+            menu_text = "Главное меню:"
+        await bot.send_message(callback.from_user.id, menu_text, reply_markup=create_main_menu(), parse_mode="HTML")
     else:
         await callback.message.edit_text(f"❌ Ошибка: {result['stderr']}")
         await callback.answer()
+
 
 @dp.callback_query(lambda c: c.data == "announce_menu")
 async def admin_announce_menu(callback: types.CallbackQuery, state: FSMContext):
@@ -463,9 +505,16 @@ async def process_announce_text(message: types.Message, state: FSMContext):
         return
 
     sent, failed = await announce_all(text)
-    await message.answer(f"✅ Отправлено: {sent}, не доставлено: {failed}")
+    sent_message = await message.answer(f"✅ Отправлено: {sent}, не доставлено: {failed}")
+    await asyncio.sleep(2)
+    try:
+        await sent_message.delete()
+    except Exception:
+        pass
+
     await state.clear()
     await message.answer("Главное меню:", reply_markup=create_main_menu())
+
 
 
 async def announce_all(text):
@@ -493,12 +542,19 @@ async def backup_files(callback: types.CallbackQuery):
     if result["returncode"] == 0:
         if await send_backup(callback.from_user.id):
             await callback.message.delete()
-            await callback.message.answer("Главное меню:", reply_markup=create_main_menu())
+            # То же самое, меню со статистикой!
+            if callback.from_user.id == ADMIN_ID:
+                stats = get_server_info()
+                menu_text = stats + "\n<b>Главное меню:</b>"
+            else:
+                menu_text = "Главное меню:"
+            await bot.send_message(callback.from_user.id, menu_text, reply_markup=create_main_menu(), parse_mode="HTML")
         else:
             await callback.message.edit_text("❌ Не удалось отправить бэкап")
     else:
         await callback.message.edit_text(f"❌ Ошибка при создании бэкапа: {result['stderr']}")
     await callback.answer()
+
 
 
 @dp.callback_query(lambda c: c.data == "del_user")
@@ -750,15 +806,19 @@ async def renew_user_start(callback: types.CallbackQuery, state: FSMContext):
         return
     client_name = callback.data.split("_", 2)[-1]
     await state.update_data(client_name=client_name)
-    await callback.message.answer(
-        f"✏️ <b>Установить срок действия</b>\n\n"
-        f"Введите новый срок действия <b>(в днях)</b> для пользователя <code>{client_name}</code>:\n"
-        f"<b>⚠️ Текущий срок будет заменён новым!</b>\n"
-        f"(после подтверждения)",
-        parse_mode="HTML"
+    await callback.message.delete()  # Удалить старое сообщение!
+    await bot.send_message(
+    callback.from_user.id,
+    f"✏️ <b>Установить срок действия</b>\n\n"
+    f"Введите новый срок действия <b>(в днях)</b> для пользователя <code>{client_name}</code>:\n"
+    f"<b>⚠️ Текущий срок будет заменён новым!</b>\n"
+    f"(после подтверждения)",
+    parse_mode="HTML",
+    reply_markup=cancel_markup  # ТВОЯ REPLY клавиатура с кнопкой "Отмена"
     )
     await state.set_state(VPNSetup.entering_days)
     await callback.answer()
+
 
 
 import subprocess
@@ -798,19 +858,37 @@ def get_cert_expiry_info(client_name):
 
 @dp.message(VPNSetup.entering_days)
 async def process_renew_days(message: types.Message, state: FSMContext):
+    if message.text.strip() == "❌ Отмена":
+        await state.clear()
+        await message.answer("Действие отменено.", reply_markup=ReplyKeyboardRemove())
+        await message.answer("Главное меню:", reply_markup=create_main_menu())
+        return
+
     days = message.text.strip()
     if not days.isdigit() or int(days) < 1:
-        await message.answer("❌ Введи корректное количество дней (целое число)")
+        m1 = await message.answer("❌ Введи корректное количество дней (целое число)", reply_markup=ReplyKeyboardRemove())
+        m2 = await message.answer("Главное меню:", reply_markup=create_main_menu())
+        await state.clear()
+        await asyncio.sleep(2)
+        try:
+            await m1.delete()
+            await m2.delete()
+        except Exception:
+            pass
         return
+
     data = await state.get_data()
     client_name = data.get("client_name")
-    await message.answer(
+
+    # Сообщение про установку срока
+    msg_wait = await message.answer(
         f"⏳ Устанавливаю новый срок действия для <b>{client_name}</b> — <b>{days} дней</b>...",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove()
     )
     result = await execute_script("9", client_name, days)
+
     if result["returncode"] == 0:
-        # Получаем новые даты
         cert_info = get_cert_expiry_info(client_name)
         if cert_info:
             date_to_str = cert_info["date_to"].strftime('%d.%m.%Y')
@@ -818,17 +896,43 @@ async def process_renew_days(message: types.Message, state: FSMContext):
             status = f"Сертификат действует до <b>{date_to_str}</b> (осталось <b>{days_left}</b> дней)."
         else:
             status = "Не удалось определить срок действия сертификата."
-        await message.answer(
+
+        # Сообщение об успехе
+        msg_success = await message.answer(
             f"✅ <b>Срок действия установлен!</b>\n{status}",
-            reply_markup=create_user_menu(client_name, is_admin=True),
             parse_mode="HTML"
         )
-    else:
+
+        await asyncio.sleep(2)
+        try:
+            await msg_wait.delete()
+            await msg_success.delete()
+        except Exception:
+            pass
+
         await message.answer(
+            "Меню пользователя:",
+            reply_markup=create_user_menu(client_name, back_callback="users_menu", is_admin=True)
+        )
+    else:
+        msg_error = await message.answer(
             f"❌ Ошибка установки срока: {result['stderr']}",
-            reply_markup=create_user_menu(client_name, is_admin=True)
+            parse_mode="HTML"
+        )
+        await asyncio.sleep(2)
+        try:
+            await msg_wait.delete()
+            await msg_error.delete()
+        except Exception:
+            pass
+
+        await message.answer(
+            "Меню пользователя:",
+            reply_markup=create_user_menu(client_name, back_callback="users_menu", is_admin=True)
         )
     await state.clear()
+
+
 
 
 
@@ -837,7 +941,7 @@ def create_user_menu(client_name, back_callback=None, is_admin=False):
         [InlineKeyboardButton(text="📊 Статистика", callback_data=f"user_stats_{client_name}")],
         [InlineKeyboardButton(text="📥 Получить конфиг OpenVPN", callback_data=f"select_openvpn_{client_name}")],
         [InlineKeyboardButton(text="✏️ Изменить имя профиля", callback_data=f"rename_profile_{client_name}")],
-        [InlineKeyboardButton(text="ℹ️ Как пользоваться", url="https://ВСТАВЬ СВОЕ/")],
+        [InlineKeyboardButton(text="ℹ️ Как пользоваться", url="https://bi4i.ru/install/")],
     ]
     # Добавлять кнопки удаления, продления и назад только для админа
     if is_admin:
@@ -931,7 +1035,6 @@ async def get_config_stats(client_name):
 @dp.callback_query(lambda c: c.data.startswith("user_stats_"))
 async def user_stats(callback: types.CallbackQuery):
     client_name = callback.data.split("_", 2)[-1]
-    gb_sent, gb_received = get_user_traffic(client_name)
     cert_info = get_cert_expiry_info(client_name)
     if cert_info:
         date_from_str = cert_info["date_from"].strftime('%d.%m.%Y')
@@ -945,12 +1048,8 @@ async def user_stats(callback: types.CallbackQuery):
     else:
         cert_block = "<b>Срок действия:</b> неизвестно\n"
     
-    text = (
-        f"<b>Текущий трафик:</b>\n"
-        f"• Передано: <b>{gb_sent} Гб</b>\n"
-        f"• Получено: <b>{gb_received} Гб</b>\n\n"
-        f"{cert_block}"
-    )
+    text = cert_block
+
     try:
         await callback.message.edit_text(
             text,
@@ -966,6 +1065,7 @@ async def user_stats(callback: types.CallbackQuery):
         else:
             raise
     await callback.answer()
+
 
 
 
@@ -1073,7 +1173,7 @@ async def manage_online_user(callback: types.CallbackQuery):
         [types.InlineKeyboardButton(text="📊 Статистика", callback_data=f"user_stats_{client_name}")],
         [types.InlineKeyboardButton(text="📥 Получить конфиг OpenVPN", callback_data=f"select_openvpn_{client_name}")],
         [types.InlineKeyboardButton(text="✏️ Изменить имя профиля", callback_data=f"rename_profile_{client_name}")],
-        [types.InlineKeyboardButton(text="ℹ️ Как пользоваться", url="https://ВСТАВЬ СВОЕ")]
+        [types.InlineKeyboardButton(text="ℹ️ Как пользоваться", url="https://bi4i.ru/install/")]
     ]
     # Кнопка "⬅️ Назад" только админу!
     if user_id == ADMIN_ID:
@@ -1531,9 +1631,9 @@ async def select_openvpn_config(callback: types.CallbackQuery):
 
 def get_openvpn_filename(client_name, config_type):
     if config_type == "vpn":
-        return f"ВСТАВЬ СВОЕ - Обычный VPN - {client_name}.ovpn"
+        return f"БичиVPN - Обычный VPN - {client_name}.ovpn"
     elif config_type == "antizapret":
-        return f"ВСТАВЬ СВОЕ - {client_name}.ovpn"
+        return f"БичиVPN - {client_name}.ovpn"
 
 
 # Для OpenVPN
@@ -1550,10 +1650,10 @@ async def download_openvpn_config(callback: types.CallbackQuery):
         return
 
     if config_type == "vpn":
-        file_name = f"ВСТАВЬ СВОЕ - Обычный VPN - {client_name}.ovpn"
+        file_name = f"БичиVPN - Обычный VPN - {client_name}.ovpn"
         base_path = "/root/antizapret/client/openvpn/vpn/"
     else:
-        file_name = f"ВСТАВЬ СВОЕ - {client_name}.ovpn"
+        file_name = f"БичиVPN - {client_name}.ovpn"
         base_path = "/root/antizapret/client/openvpn/antizapret/"
 
     file_path = os.path.join(base_path, file_name)  # <--- ВОТ ЭТОТ РЯДОК ОБЯЗАТЕЛЕН
@@ -1582,7 +1682,7 @@ async def download_openvpn_config(callback: types.CallbackQuery):
     "1. Скачайте <a href='https://play.google.com/store/apps/details?id=net.openvpn.openvpn'>OpenVPN Connect</a> (Android) или <a href='https://apps.apple.com/app/openvpn-connect/id590379981'>OpenVPN Connect</a> (iOS).\n"
     "2. Импортируйте полученный файл конфигурации (.ovpn).\n"
     "3. Нажмите <b>Подключить</b>.\n\n"
-    "Подробная инструкция: <a href='https://ВСТАВЬ СВОЕ'>ВСТАВЬ СВОЕ/install/</a>",
+    "Подробная инструкция: <a href='https://bi4i.ru/install/'>bi4i.ru/install/</a>",
     parse_mode="HTML",
     disable_web_page_preview=True
 )
@@ -1629,7 +1729,7 @@ async def handle_client_name(message: types.Message, state: FSMContext):
         if result["returncode"] == 0:
             save_profile_name(user_id, client_name)
             remove_pending(user_id)
-            await safe_send_message(user_id,
+            await safe_send_message(
                 user_id,
                 f"✅ Ваша заявка одобрена!\n"
                 f"Имя профиля: <b>{client_name}</b>\n"
@@ -1648,13 +1748,21 @@ async def handle_client_name(message: types.Message, state: FSMContext):
     if option == "1":
         result = await execute_script("1", client_name, "30")
         if result["returncode"] == 0:
-            await message.answer("✅ Клиент создан на 30 дней!", reply_markup=create_main_menu())
+            msg = await message.answer("✅ Клиент создан на 30 дней!", reply_markup=ReplyKeyboardRemove())
+            await asyncio.sleep(2)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+            await message.answer(
+                "Меню пользователя:",
+                reply_markup=create_user_menu(client_name, back_callback="users_menu", is_admin=True)
+            )
         else:
-            await message.answer(f"❌ Ошибка: {result['stderr']}")
+            await message.answer(f"❌ Ошибка: {result['stderr']}", reply_markup=ReplyKeyboardRemove())
         await state.clear()
         return
 
-    # --- 3. Удаление пользователя (через меню)
     elif option == "2":
         result = await execute_script(option, client_name)
         if result["returncode"] == 0:
@@ -1667,6 +1775,7 @@ async def handle_client_name(message: types.Message, state: FSMContext):
     else:
         await message.answer("Ошибка: неизвестное действие")
         await state.clear()
+
 
 
 
