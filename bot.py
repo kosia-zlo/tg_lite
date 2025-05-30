@@ -26,12 +26,10 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile, BotCommand
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.client.default import DefaultBotProperties
 class RenameProfile(StatesGroup):
     waiting_for_new_name = State()
     waiting_for_rename_approve = State()  # Новое состояние для одобрения с новым именем
-
 
 
 import subprocess
@@ -54,27 +52,6 @@ USERS_FILE = "users.txt"
 
 LAST_MENU_FILE = "last_menu.json"
 
-def get_last_menu_id(user_id):
-    if not os.path.exists(LAST_MENU_FILE):
-        return None
-    try:
-        with open(LAST_MENU_FILE, "r") as f:
-            data = json.load(f)
-        return data.get(str(user_id))
-    except Exception:
-        return None
-
-def set_last_menu_id(user_id, menu_id):
-    data = {}
-    if os.path.exists(LAST_MENU_FILE):
-        try:
-            with open(LAST_MENU_FILE, "r") as f:
-                data = json.load(f)
-        except Exception:
-            data = {}
-    data[str(user_id)] = menu_id
-    with open(LAST_MENU_FILE, "w") as f:
-        json.dump(data, f)
 
 def save_user_id(user_id):
     try:
@@ -133,21 +110,17 @@ async def delete_last_menus(user_id):
     with open(LAST_MENUS_FILE, "w") as f:
         json.dump(data, f)
 
-
-
-
 def set_last_menu_id(user_id, msg_id):
     data = {}
     if os.path.exists(LAST_MENUS_FILE):
         with open(LAST_MENUS_FILE, "r") as f:
             data = json.load(f)
     user_id = str(user_id)
-    ids = data.get(user_id, [])
-    ids.append(msg_id)
-    ids = ids[-MAX_MENUS_PER_USER:]  # сохраняем только последние N id
-    data[user_id] = ids
+    # Храним ТОЛЬКО ОДИН последний id!
+    data[user_id] = [msg_id]
     with open(LAST_MENUS_FILE, "w") as f:
         json.dump(data, f)
+
 
     
 
@@ -403,6 +376,7 @@ def create_main_menu():
         [InlineKeyboardButton(text="📋 Заявки на одобрение", callback_data="admin_pending_list")],
         [InlineKeyboardButton(text="🛠 Управление сервером", callback_data="server_manage_menu")],
         [InlineKeyboardButton(text="📢 Объявление", callback_data="announce_menu")],
+        [InlineKeyboardButton(text="🟢 Кто онлайн", callback_data="who_online")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -509,67 +483,93 @@ async def show_pending_list(callback: types.CallbackQuery):
     await callback.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
 
 
-
-
-
-@dp.callback_query(lambda c: c.data == "users_menu")
-async def users_menu(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-
-    await delete_last_menus(user_id)  # <<<< ЭТО ОБЯЗАТЕЛЬНО!
-    clients = await get_clients("openvpn")
-    if not clients:
-        msg = await bot.send_message(user_id, "❌ Нет пользователей.", reply_markup=create_main_menu())
-        set_last_menu_id(user_id, msg.message_id)
-        return
-
-    keyboard = [
-        [InlineKeyboardButton(text=client, callback_data=f"manage_user_{client}")]
-        for client in clients
-    ]
-    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
-    markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    msg = await bot.send_message(user_id, "Список пользователей. Нажмите на пользователя для управления:", reply_markup=markup)
-    set_last_menu_id(user_id, msg.message_id)
-    await callback.answer()
-
-
-
-
-
-@dp.callback_query(lambda c: c.data.startswith("manage_user_"))
-async def manage_user(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    await delete_last_menus(user_id)  # <<< ДОБАВЬ ЭТО!
-    client_name = callback.data.split("_", 2)[-1]
-    msg = await bot.send_message(
-        user_id,
-        f"Управление клиентом <b>{client_name}</b>:",
-        parse_mode="HTML",
-        reply_markup=create_user_menu(client_name, back_callback="users_menu", is_admin=(user_id == ADMIN_ID))
-    )
-    set_last_menu_id(user_id, msg.message_id)
-    await callback.answer()
-
-
-    
 @dp.callback_query(lambda c: c.data == "add_user")
 async def add_user_start(callback: types.CallbackQuery, state: FSMContext):
-    await state.update_data(action="1")
-    await callback.message.delete()
+    await delete_last_menus(callback.from_user.id)  # Чистим старые меню!
+    await state.update_data(action="1")  # <-- вот ЭТО!
     msg = await bot.send_message(
         callback.from_user.id,
         "Введите имя нового пользователя:",
         reply_markup=cancel_markup
     )
-    # Сохраняем message_id
     await state.update_data(add_user_msg_id=msg.message_id)
     await state.set_state(VPNSetup.entering_client_name)
     await callback.answer()
 
 
+# users_menu - показать всех юзеров (работает только для админа)
+@dp.callback_query(lambda c: c.data == "users_menu")
+async def users_menu(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Нет прав!", show_alert=True)
+        return
+
+    clients = await get_clients("openvpn")
+    if not clients:
+        await show_menu(callback.from_user.id, "❌ Нет пользователей.", create_main_menu())
+        return
+
+    keyboard = []
+    for client in clients:
+        # Поиск user_id по имени профиля (нужно реализовать!)
+        user_id = get_user_id_by_name(client)
+        if user_id:
+            keyboard.append([InlineKeyboardButton(text=client, callback_data=f"manage_userid_{user_id}")])
+        else:
+            # fallback — пусть по имени, если нет user_id
+            keyboard.append([InlineKeyboardButton(text=client, callback_data=f"manage_user_{client}")])
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
+
+    markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await show_menu(callback.from_user.id, "Список пользователей. Нажмите на пользователя для управления:", markup)
+    await callback.answer()
+
+# Новый вариант — по user_id
+@dp.callback_query(lambda c: c.data.startswith("manage_userid_"))
+async def manage_user_by_id(callback: types.CallbackQuery):
+    target_user_id = int(callback.data.split("_", 2)[-1])
+    client_name = get_profile_name(target_user_id)
+    if not client_name:
+        await callback.answer("Ошибка: пользователь не найден!", show_alert=True)
+        return
+    await delete_last_menus(callback.from_user.id)
+    await show_menu(
+        callback.from_user.id,
+        f"Управление клиентом <b>{client_name}</b>:",
+        create_user_menu(client_name, back_callback="users_menu", is_admin=(callback.from_user.id == ADMIN_ID))
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("manage_user_"))
+async def manage_user(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    await delete_last_menus(user_id)
+    client_name = callback.data.split("_", 2)[-1]
+    await state.update_data(client_name=client_name)  # <= вот это всегда!
+    await show_menu(
+        user_id,
+        f"Управление клиентом <b>{client_name}</b>:",
+        create_user_menu(client_name, back_callback="users_menu", is_admin=(user_id == ADMIN_ID))
+    )
+    await callback.answer()
+
+
+def get_user_id_by_name(profile_name):
+    # Если хранишь в json/базе, адаптируй под свою структуру!
+    if not os.path.exists("users.txt"):
+        return None
+    with open("users.txt", "r") as f:
+        for line in f:
+            line = line.strip()
+            if ":" in line:
+                uid, name = line.split(":", 1)
+                if name == profile_name:
+                    return int(uid)
+    return None
+
+
 @dp.callback_query(lambda c: c.data == "7")
-async def recreate_files(callback: types.CallbackQuery):
+async def recreate_files(callback: types.CallbackQuery, state: FSMContext):
     result = await execute_script("7")
     if result["returncode"] == 0:
         await callback.message.edit_text("✅ Файлы успешно пересозданы!")
@@ -578,79 +578,87 @@ async def recreate_files(callback: types.CallbackQuery):
             await callback.message.delete()
         except Exception:
             pass
+        # Удаляем все предыдущие меню!
+        await delete_last_menus(callback.from_user.id)
+        await state.clear()
         # Делаем с инфой сервера если админ
         if callback.from_user.id == ADMIN_ID:
             stats = get_server_info()
             menu_text = stats + "\n<b>Главное меню:</b>"
         else:
             menu_text = "Главное меню:"
-        await bot.send_message(callback.from_user.id, menu_text, reply_markup=create_main_menu(), parse_mode="HTML")
+        msg = await bot.send_message(callback.from_user.id, menu_text, reply_markup=create_main_menu(), parse_mode="HTML")
+        set_last_menu_id(callback.from_user.id, msg.message_id)
     else:
         await callback.message.edit_text(f"❌ Ошибка: {result['stderr']}")
-        await callback.answer()
+    await callback.answer()
+
+
 
 
 @dp.callback_query(lambda c: c.data == "announce_menu")
 async def admin_announce_menu(callback: types.CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID:
+    user_id = callback.from_user.id
+    if user_id != ADMIN_ID:
         await callback.answer("Нет прав!", show_alert=True)
         return
-    msg = await bot.send_message(
-        callback.from_user.id,
+
+    # Удаляем все старые меню (ПРАВИЛЬНО!)
+    await delete_last_menus(user_id)
+
+    # Одно новое через show_menu!
+    msg = await show_menu(
+        user_id,
         "✏️ Введите текст объявления:",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]]
-        )
+        InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]])
     )
-    # Сохраняй message_id
     await state.update_data(announce_msg_id=msg.message_id)
     await state.set_state(AdminAnnounce.waiting_for_text)
     await callback.answer()
+
+
 
  
 @dp.message(AdminAnnounce.waiting_for_text)
 async def process_announce_text(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-
     data = await state.get_data()
     announce_msg_id = data.get("announce_msg_id")
-    if announce_msg_id:
-        try:
-            await bot.delete_message(user_id, announce_msg_id)
-        except Exception:
-            pass
-        await state.update_data(announce_msg_id=None)
 
+    # Сразу удаляем как пользовательское сообщение, так и форму
     try:
         await bot.delete_message(user_id, message.message_id)
+        if announce_msg_id:
+            await bot.delete_message(user_id, announce_msg_id)
     except Exception:
         pass
-
-    if message.text.strip() == "⬅️ Назад":
-        await state.clear()
-        await delete_last_menus(user_id)  # <<< ЭТО СТРОГО!
-        return
 
     text = message.text.strip()
-    if not text:
-        msg = await bot.send_message(user_id, "Текст не может быть пустым!")
-        await asyncio.sleep(1)
-        try:
-            await bot.delete_message(user_id, msg.message_id)
-        except Exception:
-            pass
+    if text == "⬅️ Назад":
+        # Очистили всё — теперь просто показываем главное меню через show_menu
+        await state.clear()
+        stats = get_server_info()
+        await show_menu(user_id, stats + "\n<b>Главное меню:</b>", create_main_menu())
         return
 
-    sent, failed = await announce_all(text)
-    sent_message = await bot.send_message(user_id, f"✅ Отправлено: {sent}, не доставлено: {failed}")
-    await asyncio.sleep(1)
-    try:
-        await bot.delete_message(user_id, sent_message.message_id)
-    except Exception:
-        pass
+    if not text:
+        # если пустой ввод — заново показываем форму
+        msg = await show_menu(
+            user_id,
+            "✏️ Текст не может быть пустым. Введите текст объявления:",
+            InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]]
+            )
+        )
+        await state.update_data(announce_msg_id=msg.message_id)
+        return
 
+    # иначе рассылаем
+    sent, failed = await announce_all(text)
+    await bot.send_message(user_id, f"✅ Отправлено: {sent}, не доставлено: {failed}")
     await state.clear()
-    await delete_last_menus(user_id)
+    stats = get_server_info()
+    await show_menu(user_id, stats + "\n<b>Главное меню:</b>", create_main_menu())
 
 
 
@@ -697,13 +705,11 @@ async def backup_files(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data == "del_user")
 async def del_user_menu(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    await delete_last_menus(user_id)  # <<<< ДОБАВЬ ЭТО!
+    await delete_last_menus(user_id)  # ← ОБЯЗАТЕЛЬНО сюда!
     clients = await get_clients("openvpn")
     if not clients:
-        msg = await bot.send_message(user_id, "❌ Нет пользователей для удаления.", reply_markup=create_main_menu())
-        set_last_menu_id(user_id, msg.message_id)
+        await show_menu(user_id, "❌ Нет пользователей для удаления.", create_main_menu())
         return
-
     keyboard = [
         [InlineKeyboardButton(text=client, callback_data=f"ask_del_{client}")]
         for client in clients
@@ -717,43 +723,52 @@ async def del_user_menu(callback: types.CallbackQuery):
 
 
 
+
+
 @dp.callback_query(lambda c: c.data.startswith("ask_del_"))
 async def ask_delete_user(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
     client_name = callback.data.split("_", 2)[-1]
+    await delete_last_menus(user_id)  # ← добавь это!
     markup = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"confirm_del_{client_name}")],
             [InlineKeyboardButton(text="❌ Отмена", callback_data="del_user")]
         ]
     )
-    await callback.message.delete()  # <--- удаляем старое меню
-    await bot.send_message(callback.from_user.id, f"Удалить пользователя <b>{client_name}</b>?", reply_markup=markup, parse_mode="HTML")
+    await bot.send_message(user_id, f"Удалить пользователя <b>{client_name}</b>?", reply_markup=markup, parse_mode="HTML")
     await callback.answer()
+
 
 
 @dp.callback_query(lambda c: c.data.startswith("confirm_del_"))
 async def confirm_delete_user(callback: types.CallbackQuery):
     client_name = callback.data.split("_", 2)[-1]
+    user_id = callback.from_user.id
+
     result = await execute_script("2", client_name)
+    stats = get_server_info()
+    # 1. Удаляем само сообщение с подтверждением
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    # 2. Отправляем новое главное меню (одно)
     if result["returncode"] == 0:
-        await callback.message.delete()  # удаляем старое меню
-        msg = await bot.send_message(callback.from_user.id, f"✅ Пользователь <b>{client_name}</b> удалён.", parse_mode="HTML")
-        await asyncio.sleep(1)
-        try:
-            await bot.delete_message(msg.chat.id, msg.message_id)
-        except Exception:
-            pass
-        # Можешь здесь вызвать главное меню или другое действие
-        await bot.send_message(callback.from_user.id, "Главное меню:", reply_markup=create_main_menu())
+        await show_menu(
+            user_id,
+            f"✅ Пользователь <b>{client_name}</b> удалён.\n\n{stats}\n<b>Главное меню:</b>",
+            create_main_menu()
+        )
     else:
-        await callback.message.edit_text(f"❌ Ошибка удаления: {result['stderr']}", reply_markup=create_main_menu())
+        await show_menu(
+            user_id,
+            f"❌ Ошибка удаления: {result['stderr']}\n\n{stats}\n<b>Главное меню:</b>",
+            create_main_menu()
+        )
     await callback.answer()
 
-    
-
-@dp.callback_query(lambda c: c.data == "vless_menu")
-async def vless_menu(callback: types.CallbackQuery):
-    await callback.answer("В процессе разработки", show_alert=True)
 
 
 def get_cert_expiry_days(cert_path):
@@ -790,23 +805,21 @@ def create_openvpn_menu():
 @dp.callback_query(lambda c: c.data == "rename_cancel")
 async def rename_cancel(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
 
-    msg = await bot.send_message(user_id, "❌ Переименование отменено.")
-    await asyncio.sleep(1)
-    try:
-        await bot.delete_message(user_id, msg.message_id)
-    except Exception:
-        pass
-
+    # Сохраняем имя профиля до очистки состояния
     data = await state.get_data()
-    old_username = data.get("old_username")
-    if old_username:
-        await show_user_menu(user_id, old_username, is_admin=(user_id == ADMIN_ID))
+    client_name = data.get("old_username")
+
     await state.clear()
+    await delete_last_menus(user_id)
+
+    is_admin = (user_id == ADMIN_ID)
+    await show_menu(
+        user_id,
+        f"Меню пользователя <b>{client_name}</b>:",
+        create_user_menu(client_name, back_callback="users_menu", is_admin=is_admin)
+    )
+
     await callback.answer()
 
 
@@ -820,7 +833,12 @@ async def start_rename_profile(callback: types.CallbackQuery, state: FSMContext)
     user_id = callback.from_user.id
     old_username = callback.data.split("_", 2)[-1]
     await state.update_data(old_username=old_username)
-    await delete_last_menus(user_id)  # Удаляем все прошлые меню
+    # Удаляем все прошлые меню
+    await delete_last_menus(user_id)
+    try:
+        await callback.message.delete()  # ВАЖНО: удаляем меню управления пользователем!
+    except Exception:
+        pass
 
     markup = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -838,17 +856,15 @@ async def start_rename_profile(callback: types.CallbackQuery, state: FSMContext)
     await callback.answer()
 
 
+
 async def show_menu(user_id, text, reply_markup, parse_mode="HTML"):
-    # Удаляем все старые меню
-    for mid in get_last_menu_ids(user_id):
-        try:
-            await bot.delete_message(user_id, mid)
-        except Exception:
-            pass
-    # Отправляем новое
+    await delete_last_menus(user_id)  # Удаляем все прошлые меню этого юзера
     msg = await bot.send_message(user_id, text, reply_markup=reply_markup, parse_mode=parse_mode)
     set_last_menu_id(user_id, msg.message_id)
     return msg
+
+
+
 
 
 
@@ -987,10 +1003,9 @@ async def renew_user_start(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Нет доступа!", show_alert=True)
         return
     client_name = callback.data.split("_", 2)[-1]
-    await state.update_data(client_name=client_name)
-    await callback.message.delete()  # Удалить старое сообщение!
+    await state.update_data(client_name=client_name)  # <= обновили!
+    await callback.message.delete()
 
-    # Отправляем главное сообщение и сохраняем его message_id
     msg = await bot.send_message(
         callback.from_user.id,
         f"✏️ <b>Установить срок действия</b>\n\n"
@@ -998,14 +1013,11 @@ async def renew_user_start(callback: types.CallbackQuery, state: FSMContext):
         f"<b>⚠️ Текущий срок будет заменён новым!</b>\n"
         f"(после подтверждения)",
         parse_mode="HTML",
-        reply_markup=cancel_markup  # ТВОЯ REPLY клавиатура с кнопкой "Отмена"
+        reply_markup=cancel_markup
     )
-    # Сохраняем message_id в FSMContext для дальнейшего удаления
     await state.update_data(renew_msg_ids=[msg.message_id])
-
     await state.set_state(VPNSetup.entering_days)
     await callback.answer()
-
 
 
 
@@ -1046,52 +1058,67 @@ def get_cert_expiry_info(client_name):
 
 @dp.message(VPNSetup.entering_days)
 async def process_renew_days(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
     data = await state.get_data()
-    user_id = message.from_user.id   # <--- добавь эту строку!
-    if message.text.strip() == "❌ Отмена":
-        message_ids = data.get("renew_msg_ids", [])
-        message_ids.append(message.message_id)
-        for mid in set(message_ids):
-            try:
-                await bot.delete_message(message.chat.id, mid)
-            except Exception:
-                pass
-        msg = await message.answer("Действие отменено.")
-        await asyncio.sleep(1)
+    renew_ids = data.get("renew_msg_ids", [])
+    client_name = data.get("client_name")  # <-- тут всегда получаем имя!
+
+    # Удаляем временные сообщения (например, "Введите срок" и ожидание)
+    for mid in set(renew_ids):
         try:
-            await msg.delete()
+            await bot.delete_message(user_id, mid)
         except Exception:
             pass
+    await state.update_data(renew_msg_ids=[])
+
+    text = message.text.strip()
+
+    # Обработка отмены
+    if text == "❌ Отмена":
         await state.clear()
-        # --- ВОЗВРАЩАЕМ МЕНЮ ---
-        client_name = data.get("client_name")
-        if client_name:
-            menu_msg = await message.answer(
-                "Меню пользователя:",
-                reply_markup=create_user_menu(client_name, back_callback="users_menu", is_admin=True)
-            )
-            set_last_menu_id(user_id, menu_msg.message_id)
+        is_admin = (user_id == ADMIN_ID)
+        await show_menu(
+            user_id,
+            f"Меню пользователя <b>{client_name}</b>:",
+            create_user_menu(client_name, back_callback="users_menu", is_admin=is_admin)
+        )
         return
 
-    days = message.text.strip()
-    if not days.isdigit() or int(days) < 1:
+    # Проверка на корректность ввода
+    if not text.isdigit() or int(text) < 1:
         m1 = await message.answer("❌ Введи корректное количество дней (целое число)", reply_markup=ReplyKeyboardRemove())
-        m2 = await message.answer("Меню пользователя:", reply_markup=create_user_menu(get_profile_name(user_id), back_callback="users_menu", is_admin=True))
-        set_last_menu_id(user_id, m1.message_id)
-        set_last_menu_id(user_id, m2.message_id)
+        await asyncio.sleep(1)
+        try:
+            await m1.delete()
+        except Exception:
+            pass
+        # Возвращаемся в меню пользователя, а не в главное!
+        is_admin = (user_id == ADMIN_ID)
+        await show_menu(
+            user_id,
+            f"Меню пользователя <b>{client_name}</b>:",
+            create_user_menu(client_name, back_callback="users_menu", is_admin=is_admin)
+        )
         await state.clear()
         return
 
-    client_name = data.get("client_name")
+    days = int(text)
 
     msg_wait = await message.answer(
-        f"⏳ Устанавливаю новый срок действия для <b>{client_name}</b> — <b>{days} дней</b>...",
+        f"⏳ Устанавливаю новый срок действия для <b>{client_name}</b> — {days} дней...",
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove()
     )
-    set_last_menu_id(user_id, msg_wait.message_id)
+    await state.update_data(renew_msg_ids=[msg_wait.message_id])
 
-    result = await execute_script("9", client_name, days)
+    result = await execute_script("9", client_name, str(days))
+
+    # Удаляем сообщение ожидания
+    try:
+        await bot.delete_message(user_id, msg_wait.message_id)
+    except Exception:
+        pass
+    await state.update_data(renew_msg_ids=[])
 
     if result["returncode"] == 0:
         cert_info = get_cert_expiry_info(client_name)
@@ -1101,36 +1128,30 @@ async def process_renew_days(message: types.Message, state: FSMContext):
             status = f"Сертификат действует до <b>{date_to_str}</b> (осталось <b>{days_left}</b> дней)."
         else:
             status = "Не удалось определить срок действия сертификата."
-
-        msg_success = await message.answer(
+        msg_ok = await message.answer(
             f"✅ <b>Срок действия установлен!</b>\n{status}",
             parse_mode="HTML"
         )
-        set_last_menu_id(user_id, msg_success.message_id)
-
-        menu_msg = await message.answer(
-            "Меню пользователя:",
-            reply_markup=create_user_menu(client_name, back_callback="users_menu", is_admin=True)
-        )
-        set_last_menu_id(user_id, menu_msg.message_id)
+        await asyncio.sleep(1)
+        try:
+            await msg_ok.delete()
+        except Exception:
+            pass
 
     else:
-        msg_error = await message.answer(
+        await message.answer(
             f"❌ Ошибка установки срока: {result['stderr']}",
             parse_mode="HTML"
         )
-        set_last_menu_id(user_id, msg_error.message_id)
-        menu_msg = await message.answer(
-            "Меню пользователя:",
-            reply_markup=create_user_menu(client_name, back_callback="users_menu", is_admin=True)
-        )
-        set_last_menu_id(user_id, menu_msg.message_id)
 
+    # В любом случае выводим одно меню пользователя
+    is_admin = (user_id == ADMIN_ID)
+    await show_menu(
+        user_id,
+        f"Меню пользователя <b>{client_name}</b>:",
+        create_user_menu(client_name, back_callback="users_menu", is_admin=is_admin)
+    )
     await state.clear()
-
-
-
-
 
 
 
@@ -1143,7 +1164,7 @@ def create_user_menu(client_name, back_callback=None, is_admin=False):
     ]
     # Только для обычных пользователей!
     if not is_admin:
-        keyboard.append([InlineKeyboardButton(text="💬 Связь с поддержкой", url="https://t.me/vatakatru")])
+        keyboard.append([InlineKeyboardButton(text="💬 Связь с поддержкой", url="https://ВСТАВЬ СВОЕ")])
         keyboard.append([InlineKeyboardButton(text="ℹ️ Как пользоваться", url="https://ВСТАВЬ СВОЕ")])  # <<-- теперь только юзеру!
     # Кнопки только для админа
     if is_admin:
@@ -1154,12 +1175,8 @@ def create_user_menu(client_name, back_callback=None, is_admin=False):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-
-
-
-#Удаление пользователя
 @dp.callback_query(lambda c: c.data.startswith("delete_user_"))
-async def delete_user_confirm(callback: types.CallbackQuery):
+async def delete_user_from_user_menu(callback: types.CallbackQuery, state: FSMContext):
     client_name = callback.data.split("_", 2)[-1]
     markup = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1168,79 +1185,96 @@ async def delete_user_confirm(callback: types.CallbackQuery):
         ]
     )
     await callback.message.edit_text(
-        f"Удалить пользователя <b>{client_name}</b>?", parse_mode="HTML", reply_markup=markup
+        f"Удалить пользователя <b>{client_name}</b>?",
+        reply_markup=markup,
+        parse_mode="HTML"
     )
     await callback.answer()
 
 
+
+#Удаление пользователя
 @dp.message(RenameProfile.waiting_for_new_name)
 async def handle_new_username(message: types.Message, state: FSMContext):
     new_username = message.text.strip()
-    if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", new_username):
-        await message.answer("❌ Некорректное имя! Используйте буквы, цифры, _ и -")
-        return
-
     data = await state.get_data()
     old_username = data["old_username"]
-    cert_path = f"/etc/openvpn/client/keys/{old_username}.crt"
-    days_left = get_cert_expiry_days(cert_path)
 
-    msgs_to_delete = []
+    # 1) Находим CRT-файл без учёта регистра
+    issued_dir = "/etc/openvpn/easyrsa3/pki/issued"
+    cert_match = None
+    try:
+        for fn in os.listdir(issued_dir):
+            name, ext = os.path.splitext(fn)
+            if ext.lower() == ".crt" and name.lower() == old_username.lower():
+                cert_match = name
+                break
+    except Exception as e:
+        logging.error(f"Can't list issued dir: {e}")
 
+    cert_to_revoke = cert_match or old_username
+    cert_path = os.path.join(issued_dir, f"{cert_to_revoke}.crt")
+
+    # 2) Пробуем отозвать старый сертификат
     m1 = await message.answer(f"Удаляем старый профиль: <b>{old_username}</b>...", parse_mode="HTML")
-    msgs_to_delete.append((m1.chat.id, m1.message_id))
+    result_del = await execute_script("2", cert_to_revoke)
 
-    result_del = await execute_script("2", old_username)
     if result_del["returncode"] != 0:
-        m2 = await message.answer(f"❌ Ошибка удаления старого профиля: {result_del['stderr']}")
-        msgs_to_delete.append((m2.chat.id, m2.message_id))
-        await asyncio.sleep(1)
-        for cid, mid in msgs_to_delete:
+        stderr = result_del.get("stderr", "")
+        if "Unable to revoke as no certificate was found" in stderr:
+            logging.warning(f"No CRT to revoke for {cert_to_revoke}: {stderr}")
+            # продолжаем дальше
+        else:
+            await asyncio.sleep(1)
             try:
-                await bot.delete_message(cid, mid)
+                await m1.delete()
             except Exception:
                 pass
-        await state.clear()
-        return
+            await message.answer(f"❌ Ошибка удаления старого профиля: {stderr}")
+            await state.clear()
+            return
 
-    m3 = await message.answer(f"Создаём новый профиль: <b>{new_username}</b> на {days_left} дней...", parse_mode="HTML")
-    msgs_to_delete.append((m3.chat.id, m3.message_id))
-
+    # 3) Создаём новый профиль на те же дни, что остались
+    days_left = get_cert_expiry_days(cert_path)
+    m2 = await message.answer(f"Создаём новый профиль: <b>{new_username}</b> на {days_left} дней...", parse_mode="HTML")
     result_add = await execute_script("1", new_username, str(days_left))
+
+    # Удаляем оба временных сообщения через 1 секунду
+    await asyncio.sleep(1)
+    try:
+        await m1.delete()
+    except Exception:
+        pass
+    try:
+        await m2.delete()
+    except Exception:
+        pass
+
     if result_add["returncode"] != 0:
-        m4 = await message.answer(f"❌ Ошибка создания нового профиля: {result_add['stderr']}")
-        msgs_to_delete.append((m4.chat.id, m4.message_id))
-        await asyncio.sleep(1)
-        for cid, mid in msgs_to_delete:
-            try:
-                await bot.delete_message(cid, mid)
-            except Exception:
-                pass
+        await message.answer(f"❌ Ошибка создания нового профиля: {result_add['stderr']}")
         await state.clear()
         return
 
-    m5 = await message.answer("Перегенерируем все профили...")
-    msgs_to_delete.append((m5.chat.id, m5.message_id))
-
+    # 4) Перегенерируем все файлы
     await execute_script("7")
 
-    await asyncio.sleep(1)
-    for cid, mid in msgs_to_delete:
-        try:
-            await bot.delete_message(cid, mid)
-        except Exception:
-            pass
+    # 5) Удаляем ВСЕ старые меню управления!
+    await delete_last_menus(message.from_user.id)
 
-    # ВОТ ЗДЕСЬ -- отправка меню, которое исчезнет только по твоей логике удаления last_menu
-    is_admin = (message.from_user.id == ADMIN_ID)
-    msg = await message.answer(
+    # 6) Показываем только одно новое меню через show_menu (и только show_menu!)
+    await show_menu(
+        message.from_user.id,
         "✅ Имя профиля успешно изменено!\n\n"
         "Теперь вы можете скачать новый конфиг через меню кнопкой 📥 <b>Получить конфиг OpenVPN</b>.",
-        parse_mode="HTML",
-        reply_markup=create_user_menu(new_username, back_callback="users_menu", is_admin=is_admin)
+        create_user_menu(new_username, back_callback="users_menu", is_admin=(message.from_user.id == ADMIN_ID))
     )
-    set_last_menu_id(message.from_user.id, msg.message_id)
+
     await state.clear()
+
+
+
+
+
 
 
 def get_cert_expiry_days_for_user(client_name):
@@ -1373,12 +1407,16 @@ def get_online_users_from_log():
     print(f"Обнаружены пользователи: {users}")  # Для отладки
     return sorted(users)
 
-
+#Кто онлайн
 @dp.callback_query(lambda c: c.data == "who_online")
 async def who_online(callback: types.CallbackQuery):
     online = get_online_users_from_log()
     if online:
-        # Формируем кнопки для каждого юзера онлайн
+        # Удаляем старое меню
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [types.InlineKeyboardButton(text=f"• {u}", callback_data=f"manage_online_{u}")]
@@ -1386,37 +1424,53 @@ async def who_online(callback: types.CallbackQuery):
             ] + [[types.InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]]
         )
         msg = "🟢 <b>Кто в сети:</b>\n\nНажми на клиента для управления:"
-        await switch_menu(callback, msg, reply_markup=keyboard)
+        await bot.send_message(callback.from_user.id, msg, reply_markup=keyboard, parse_mode="HTML")
     else:
-        await callback.message.edit_text("❌ Сейчас нет никого онлайн", reply_markup=create_main_menu())
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await bot.send_message(callback.from_user.id, "❌ Сейчас нет никого онлайн", reply_markup=create_main_menu())
     await callback.answer()
+
+
 
 @dp.callback_query(lambda c: c.data.startswith("manage_online_"))
 async def manage_online_user(callback: types.CallbackQuery):
     client_name = callback.data.split("_", 2)[-1]
     user_id = callback.from_user.id
 
+    # УДАЛЯЕМ ВСЕ СТАРЫЕ МЕНЮ — это обязательно!
+    await delete_last_menus(user_id)
+    try:
+        await callback.message.delete()  # <- добавь это, если не было!
+    except Exception:
+        pass
+
     keyboard = [
         [types.InlineKeyboardButton(text="📊 Статистика", callback_data=f"user_stats_{client_name}")],
         [types.InlineKeyboardButton(text="📥 Получить конфиг OpenVPN", callback_data=f"select_openvpn_{client_name}")],
-        [types.InlineKeyboardButton(text="✏️ Изменить имя профиля", callback_data=f"rename_profile_{client_name}")],
+        [types.InlineKeyboardButton(text="✏️ Изменить имя профиля", callback_data=f"rename_profile_{client_name}")]
     ]
-    # Кнопка "ℹ️ Как пользоваться" только для обычных пользователей
-    if user_id != ADMIN_ID:
+    if user_id == ADMIN_ID:
+        keyboard.append([types.InlineKeyboardButton(text="✏️ Установить срок действия", callback_data=f"renew_user_{client_name}")])
+        keyboard.append([types.InlineKeyboardButton(text="❌ Удалить пользователя", callback_data=f"delete_user_{client_name}")])
+        keyboard.append([types.InlineKeyboardButton(text="⬅️ Назад", callback_data="who_online")])
+    else:
         keyboard.append([types.InlineKeyboardButton(text="ℹ️ Как пользоваться", url="https://ВСТАВЬ СВОЕ")])
 
-    # Кнопка "⬅️ Назад" только админу!
-    if user_id == ADMIN_ID:
-        keyboard.append([types.InlineKeyboardButton(text="⬅️ Назад", callback_data="who_online")])
-
     markup = types.InlineKeyboardMarkup(inline_keyboard=keyboard)
-    await switch_menu(callback, f"Управление клиентом <b>{client_name}</b>:", reply_markup=markup)
+    # Используем show_menu для управления last_menu.json
+    await show_menu(user_id, f"Управление клиентом <b>{client_name}</b>:", markup)
     await callback.answer()
+
+
 
 
 @dp.message(Command("start"))
 async def start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
+    await delete_last_menus(user_id)  # ← в самом начале
 
     # Удаляем ВСЕ последние свои меню (N штук)
     for mid in get_last_menu_ids(user_id):
@@ -1479,8 +1533,6 @@ async def start(message: types.Message, state: FSMContext):
 
 
 
-
-
 @dp.callback_query(lambda c: c.data == "send_request")
 async def send_request(callback: types.CallbackQuery):
     print("[SEND_REQUEST] send_request вызван")
@@ -1516,19 +1568,17 @@ async def send_request(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data == "add_del_menu")
 async def add_del_menu(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-
-    await delete_last_menus(user_id)
-    msg = await bot.send_message(
+    await show_menu(
         user_id,
         "Выберите действие:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Добавить пользователя", callback_data="add_user")],
             [InlineKeyboardButton(text="➖ Удалить пользователя", callback_data="del_user")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]
         ])
     )
-    set_last_menu_id(user_id, msg.message_id)
     await callback.answer()
+
 
 
 
@@ -1544,27 +1594,24 @@ async def client_exists(vpn_type: str, client_name: str) -> bool:
 async def handle_main_menu(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
 
-    # Удаляем ВСЕ последние свои меню (в том числе и из FSMContext!)
-    data = await state.get_data()
-    announce_msg_id = data.get("announce_msg_id")
-    if announce_msg_id:
-        try:
-            await bot.delete_message(user_id, announce_msg_id)
-        except Exception:
-            pass
-        await state.update_data(announce_msg_id=None)
-
+    # Удаляем всё что есть у юзера
     await delete_last_menus(user_id)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
     await state.clear()
     stats = get_server_info()
-    msg = await bot.send_message(
+    await show_menu(
         user_id,
         stats + "\n<b>Главное меню:</b>",
-        reply_markup=create_main_menu(),
-        parse_mode="HTML"
+        create_main_menu()
     )
-    set_last_menu_id(user_id, msg.message_id)
     await callback.answer()
+
+
+
 
 
 @dp.callback_query(lambda c: c.data == "no_action")
@@ -1601,10 +1648,6 @@ async def handle_client_selection(callback: types.CallbackQuery, state: FSMConte
 async def openvpn_menu(callback: types.CallbackQuery):
     await switch_menu(callback, "Меню OpenVPN:", reply_markup=create_openvpn_menu())
     await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "vless_menu")
-async def vless_menu(callback: types.CallbackQuery):
-    await callback.answer("В процессе разработки", show_alert=True)
 
 
 @dp.callback_query(VPNSetup.choosing_config_type)
@@ -1901,7 +1944,7 @@ def get_openvpn_filename(client_name, config_type):
         return f"ВСТАВЬ СВОЕ - {client_name}.ovpn"
 
 
-# Для OpenVPN
+# Вывод конфига для OpenVPN
 @dp.callback_query(lambda c: c.data.startswith("download_openvpn_"))
 async def download_openvpn_config(callback: types.CallbackQuery):
     parts = callback.data.split("_", 3)
@@ -1921,10 +1964,16 @@ async def download_openvpn_config(callback: types.CallbackQuery):
         file_name = f"ВСТАВЬ СВОЕ - {client_name}.ovpn"
         base_path = "/root/antizapret/client/openvpn/antizapret/"
 
-    file_path = os.path.join(base_path, file_name)  # <--- ВОТ ЭТОТ РЯДОК ОБЯЗАТЕЛЕН
+    file_path = os.path.join(base_path, file_name)
+
+    # Удаляем все старые меню + само меню "выберите тип" (это и есть callback.message)
+    await delete_last_menus(callback.from_user.id)
+    try:
+        await callback.message.delete()  # <- важно!
+    except Exception:
+        pass
 
     if os.path.exists(file_path):
-        await callback.message.delete()
         await bot.send_document(
             callback.from_user.id,
             FSInputFile(file_path),
@@ -1932,69 +1981,63 @@ async def download_openvpn_config(callback: types.CallbackQuery):
         )
         await callback.answer("✅ Конфигурация отправлена.")
         await safe_send_message(
-        ADMIN_ID,
-        f"📥 <b>Скачивание конфига</b>\n"
-        f"Пользователь: <a href='tg://user?id={callback.from_user.id}'>{callback.from_user.id}</a> (@{callback.from_user.username})\n"
-        f"Файл: <code>{os.path.basename(file_path)}</code>",
-        parse_mode="HTML"
+            ADMIN_ID,
+            f"📥 <b>Скачивание конфига</b>\n"
+            f"Пользователь: <a href='tg://user?id={callback.from_user.id}'>{callback.from_user.id}</a> (@{callback.from_user.username})\n"
+            f"Файл: <code>{os.path.basename(file_path)}</code>",
+            parse_mode="HTML"
+        )
+        await bot.send_message(
+            callback.from_user.id,
+            "📲 <b>Как подключиться к OpenVPN</b>\n"
+            "1. Скачайте <a href='https://play.google.com/store/apps/details?id=net.openvpn.openvpn'>OpenVPN Connect</a> (Android) или <a href='https://apps.apple.com/app/openvpn-connect/id590379981'>OpenVPN Connect</a> (iOS).\n"
+            "2. Импортируйте полученный файл конфигурации (.ovpn).\n"
+            "3. Нажмите <b>Подключить</b>.\n\n"
+            "Подробная инструкция: <a href='https://ВСТАВЬ СВОЕ'>ВСТАВЬ СВОЕ</a>",
+            parse_mode="HTML",
+            disable_web_page_preview=True
         )
         markup = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"select_openvpn_{client_name}")]
         ])
-        await bot.send_message(
-    callback.from_user.id,
-    "📲 <b>Как подключиться к OpenVPN</b>\n"
-    "1. Скачайте <a href='https://play.google.com/store/apps/details?id=net.openvpn.openvpn'>OpenVPN Connect</a> (Android) или <a href='https://apps.apple.com/app/openvpn-connect/id590379981'>OpenVPN Connect</a> (iOS).\n"
-    "2. Импортируйте полученный файл конфигурации (.ovpn).\n"
-    "3. Нажмите <b>Подключить</b>.\n\n"
-    "Подробная инструкция: <a href='https://ВСТАВЬ СВОЕ'>ВСТАВЬ СВОЕ</a>",
-    parse_mode="HTML",
-    disable_web_page_preview=True
-)
-        await bot.send_message(
+        await show_menu(
             callback.from_user.id,
             "Вернуться к выбору типа конфига:",
-            reply_markup=markup
+            markup
         )
     else:
         markup = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"select_openvpn_{client_name}")]
         ])
-        await callback.message.delete()
-        await bot.send_message(
+        await show_menu(
             callback.from_user.id,
             f"❌ Не найден файл {file_name} в папке {base_path}\n"
             f"Файлы в папке: {os.listdir(base_path) if os.path.exists(base_path) else 'Нет такой папки'}",
-            reply_markup=markup
+            markup
         )
         await callback.answer("❌ Файл конфигурации не найден.", show_alert=True)
 
 
+
+
 @dp.message(VPNSetup.entering_client_name)
 async def handle_client_name(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+
+    # Удаляем сообщение "Введите имя нового пользователя:"
+    msg_id = data.get("add_user_msg_id")
+    if msg_id:
+        try:
+            await bot.delete_message(message.chat.id, msg_id)
+        except Exception:
+            pass
+
+    # --- Вот здесь if, с правильным отступом ---
     if message.text == "❌ Отмена":
-        data = await state.get_data()
-        # Удаляем рабочее сообщение
-        msg_id = data.get("add_user_msg_id")
-        if msg_id:
-            try:
-                await bot.delete_message(message.chat.id, msg_id)
-            except Exception:
-                pass
-        # Удаляем и сообщение "Отмена", если надо
-        try:
-            await bot.delete_message(message.chat.id, message.message_id)
-        except Exception:
-            pass
-        # Можно отправить уведомление и удалить его через 2 сек
-        cancel_msg = await message.answer("Действие отменено.")
-        await asyncio.sleep(1)
-        try:
-            await cancel_msg.delete()
-        except Exception:
-            pass
         await state.clear()
-        await show_menu(message.from_user.id, "Главное меню:", create_main_menu())
+        await delete_last_menus(message.from_user.id)  # ← сразу после clear!
+        stats = get_server_info()
+        await show_menu(message.from_user.id, stats + "\n<b>Главное меню:</b>", create_main_menu())
         return
 
     client_name = message.text.strip()
@@ -2019,13 +2062,13 @@ async def handle_client_name(message: types.Message, state: FSMContext):
                 parse_mode="HTML",
                 reply_markup=create_user_menu(client_name)
             )
-            await message.answer("Пользователь активирован и уведомлен!", reply_markup=create_main_menu())
+            await show_menu(message.from_user.id, "Пользователь активирован и уведомлен!", create_main_menu())
         else:
             await message.answer(f"❌ Ошибка: {result['stderr']}")
         await state.clear()
         return
 
-    # --- 2. Обычное добавление пользователя (через меню)
+    # --- 2. Обычное добавление/удаление пользователя через меню
     option = data.get("action")
     if option == "1":
         result = await execute_script("1", client_name, "30")
@@ -2036,27 +2079,25 @@ async def handle_client_name(message: types.Message, state: FSMContext):
                 await msg.delete()
             except Exception:
                 pass
-            await message.answer(
-                "Меню пользователя:",
-                reply_markup=create_user_menu(client_name, back_callback="users_menu", is_admin=True)
-            )
+            stats = get_server_info()
+            await show_menu(message.from_user.id, stats + "\n<b>Главное меню:</b>", create_main_menu())
         else:
             await message.answer(f"❌ Ошибка: {result['stderr']}", reply_markup=ReplyKeyboardRemove())
         await state.clear()
         return
-
     elif option == "2":
         result = await execute_script(option, client_name)
         if result["returncode"] == 0:
-            await message.answer("✅ Клиент удалён!", reply_markup=create_main_menu())
+            stats = get_server_info()
+            await show_menu(message.from_user.id, stats + "\n<b>Главное меню:</b>", create_main_menu())
         else:
             await message.answer(f"❌ Ошибка: {result['stderr']}")
         await state.clear()
         return
-
     else:
         await message.answer("Ошибка: неизвестное действие")
         await state.clear()
+        return
 
 
 
@@ -2344,7 +2385,8 @@ async def process_application(callback: types.CallbackQuery, state: FSMContext):
                 parse_mode="HTML",
                 reply_markup=create_user_menu(client_name)
             )
-            await callback.message.edit_text(f"✅ Пользователь <code>{client_name}</code> активирован и добавлен в белый список.")
+            stats = get_server_info()
+            await show_menu(callback.from_user.id, stats + "\n<b>Главное меню:</b>", create_main_menu())
         else:
             await callback.message.edit_text(f"❌ Ошибка: {result['stderr']}")
         await callback.answer()
@@ -2356,13 +2398,6 @@ async def process_application(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.edit_text("❌ Заявка отклонена.")
         await callback.answer()
 
-
-
-
-@dp.message()
-async def catch_all(message: types.Message):
-    print(f"[DEBUG] Сообщение: {message.text} от {message.from_user.id}")
-    await message.answer("DEBUG: сообщение получено!")
 
 async def main():
     print("✅ Бот успешно запущен!")
