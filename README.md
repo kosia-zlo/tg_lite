@@ -23,16 +23,16 @@
 Тут я опишу что и как и куда добавить
 
 ---
-1. Файл .env в папку root/    Измените там значения на свои
-2. Файл bot.py в папку root/ Измените там значения на свои
-2.1  Свое я там убрал и заменил текст на :exclamation::exclamation::exclamation:"ВСТАВЬ СВОЕ":exclamation::exclamation::exclamation: просто поиском можешь найти эти строки и вставить туда всё свое
-3. antizapret.conf в папку /etc/openvpn/client/templates Измени значения на свои
-3.1   Строка 15 Ваше навание в клиенте
-4.  vpn.conf в папку /etc/openvpn/client/templates Измени значения на свои
-4.1   Строка 15 Ваше навание в клиенте
-5.  client.sh в папку /root/antizapret/ замени :exclamation::exclamation::exclamation:"ВСТАВЬ СВОЕ":exclamation::exclamation::exclamation:
-6.  db.py в папку /root/ Не нужно ние менять
-7.  renew_cert.sh в папку /etc/openvpn/easyrsa3 Не нужно ниче менять
+- Файл .env в папку root/    Измените там значения на свои
+- Файл bot.py в папку root/ Измените там значения на свои
+- Свое я там убрал и заменил текст на :exclamation::exclamation::exclamation:"ВСТАВЬ СВОЕ":exclamation::exclamation::exclamation: просто поиском можешь найти эти строки и вставить туда всё свое
+- antizapret.conf в папку /etc/openvpn/client/templates Измени значения на свои
+- Строка 15 Ваше навание в клиенте
+- vpn.conf в папку /etc/openvpn/client/templates Измени значения на свои
+- Строка 15 Ваше навание в клиенте
+- client.sh в папку /root/antizapret/ замени :exclamation::exclamation::exclamation:"ВСТАВЬ СВОЕ":exclamation::exclamation::exclamation:
+- db.py в папку /root/ Не нужно ние менять
+- renew_cert.sh в папку /etc/openvpn/easyrsa3 Не нужно ниче менять
 ---
 
 
