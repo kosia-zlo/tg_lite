@@ -30,7 +30,7 @@
 3.1   Строка 15 Ваше навание в клиенте
 4.  vpn.conf в папку /etc/openvpn/client/templates Измени значения на свои
 4.1   Строка 15 Ваше навание в клиенте
-5.  client.sh в папку /root/antizapret/ Не нужно ниче менять
+5.  client.sh в папку /root/antizapret/ замени :exclamation::exclamation::exclamation:"ВСТАВЬ СВОЕ":exclamation::exclamation::exclamation:
 6.  db.py в папку /root/ Не нужно ние менять
 7.  renew_cert.sh в папку /etc/openvpn/easyrsa3 Не нужно ниче менять
 ---
