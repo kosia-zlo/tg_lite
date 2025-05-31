@@ -17,7 +17,7 @@ init_db()
 import hashlib
 from aiogram import types
 
-
+import sqlite3
 import uuid
 from aiogram.fsm.state import State, StatesGroup
 from dotenv import load_dotenv
@@ -51,6 +51,19 @@ cancel_markup = ReplyKeyboardMarkup(
 USERS_FILE = "users.txt"
 
 LAST_MENU_FILE = "last_menu.json"
+
+# для SQLite
+def save_profile_name(user_id, new_profile_name, db_path="/root/vpn.db"):
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM users WHERE id=?", (user_id,))
+    res = cur.fetchone()
+    if res:
+        cur.execute("UPDATE users SET profile_name=? WHERE id=?", (new_profile_name, user_id))
+    else:
+        cur.execute("INSERT INTO users (id, profile_name) VALUES (?, ?)", (user_id, new_profile_name))
+    conn.commit()
+    conn.close()
 
 
 def save_user_id(user_id):
@@ -254,28 +267,53 @@ async def set_bot_commands():
 @dp.callback_query(lambda c: c.data.startswith("approve_rename_"))
 async def process_application_rename(callback: types.CallbackQuery, state: FSMContext):
     user_id = int(callback.data.split("_", 2)[-1])
-    await state.update_data(approve_user_id=user_id)
-    # Вместо edit_text отправляем новое сообщение
-    await bot.send_message(
+    # Сохраняем id заявки (меню заявки)
+    await state.update_data(approve_user_id=user_id, pending_menu_msg_id=callback.message.message_id)
+    try:
+        await callback.message.delete()  # Уже удаляем
+    except Exception:
+        pass
+    msg = await bot.send_message(
         callback.from_user.id,
         f"Введи новое имя для пользователя (id <code>{user_id}</code>):",
         parse_mode="HTML"
     )
     await state.set_state(RenameProfile.waiting_for_rename_approve)
+    await state.update_data(rename_prompt_id=msg.message_id)
     await callback.answer()
+
 
 
 @dp.message(RenameProfile.waiting_for_rename_approve)
 async def process_rename_new_name(message: types.Message, state: FSMContext):
     new_name = message.text.strip()
-    if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", new_name):
-        await message.answer("❌ Некорректное имя! Используй только буквы, цифры, _ и -.")
-        return
-
     data = await state.get_data()
+    rename_prompt_id = data.get("rename_prompt_id")
+    pending_menu_msg_id = data.get("pending_menu_msg_id")
+
+    # Удаляем prompt "Введи новое имя..."
+    if rename_prompt_id:
+        try:
+            await bot.delete_message(message.chat.id, rename_prompt_id)
+        except Exception:
+            pass
+
+    # Удаляем само сообщение пользователя (введённое имя)
+    try:
+        await bot.delete_message(message.chat.id, message.message_id)
+    except Exception:
+        pass
+
     user_id = data.get("approve_user_id")
     if not user_id:
         await message.answer("Ошибка: не найден id пользователя.")
+        await state.clear()
+        return
+
+    if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", new_name):
+        await safe_send_message(
+            message.chat.id, "❌ Некорректное имя! Используй только буквы, цифры, _ и -."
+        )
         await state.clear()
         return
 
@@ -285,16 +323,33 @@ async def process_rename_new_name(message: types.Message, state: FSMContext):
         approve_user(user_id)
         remove_pending(user_id)
         save_user_id(user_id)  # ВАЖНО! — сразу в users.txt
-        await safe_send_message(
+        msg = await safe_send_message(
             user_id,
             f"✅ Ваша заявка одобрена!\nИмя профиля: <b>{new_name}</b>\nТеперь вам доступны функции VPN.",
             parse_mode="HTML",
             reply_markup=create_user_menu(new_name)
         )
-        await message.answer(f"Пользователь <code>{new_name}</code> активирован и добавлен в белый список.", parse_mode="HTML")
+        # УДАЛЯЕМ сообщение "Пользователь ... активирован"
+        try:
+            await bot.delete_message(message.chat.id, msg.message_id)
+        except Exception:
+            pass
+
+        # Главное меню админу
+        stats = get_server_info()
+        menu = await show_menu(
+            message.chat.id,
+            stats + "\n<b>Главное меню:</b>",
+            create_main_menu()
+        )
+        set_last_menu_id(message.chat.id, menu.message_id)
     else:
-        await message.answer(f"❌ Ошибка: {result['stderr']}")
+        await safe_send_message(
+            message.chat.id,
+            f"❌ Ошибка: {result['stderr']}"
+        )
     await state.clear()
+
 
 
 
@@ -1164,7 +1219,7 @@ def create_user_menu(client_name, back_callback=None, is_admin=False):
     ]
     # Только для обычных пользователей!
     if not is_admin:
-        keyboard.append([InlineKeyboardButton(text="💬 Связь с поддержкой", url="https://ВСТАВЬ СВОЕ")])
+        keyboard.append([InlineKeyboardButton(text="💬 Связь с поддержкой", url="https://t.me/ВСТАВЬ СВОЕ")])
         keyboard.append([InlineKeyboardButton(text="ℹ️ Как пользоваться", url="https://ВСТАВЬ СВОЕ")])  # <<-- теперь только юзеру!
     # Кнопки только для админа
     if is_admin:
@@ -1198,78 +1253,59 @@ async def delete_user_from_user_menu(callback: types.CallbackQuery, state: FSMCo
 async def handle_new_username(message: types.Message, state: FSMContext):
     new_username = message.text.strip()
     data = await state.get_data()
-    old_username = data["old_username"]
+    old_username = data.get("old_username")
 
-    # 1) Находим CRT-файл без учёта регистра
-    issued_dir = "/etc/openvpn/easyrsa3/pki/issued"
-    cert_match = None
-    try:
-        for fn in os.listdir(issued_dir):
-            name, ext = os.path.splitext(fn)
-            if ext.lower() == ".crt" and name.lower() == old_username.lower():
-                cert_match = name
-                break
-    except Exception as e:
-        logging.error(f"Can't list issued dir: {e}")
+    # Проверка нового имени
+    if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", new_username):
+        await message.answer("❌ Некорректное имя! Используй только буквы, цифры, _ и -.")
+        await state.clear()
+        return
 
-    cert_to_revoke = cert_match or old_username
-    cert_path = os.path.join(issued_dir, f"{cert_to_revoke}.crt")
+    # Получить user_id по старому имени
+    user_id = None
+    conn = sqlite3.connect("/root/vpn.db")
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM users WHERE profile_name=?", (old_username,))
+    res = cur.fetchone()
+    if res:
+        user_id = res[0]
+    conn.close()
+    if not user_id:
+        await message.answer("❌ Пользователь по старому имени не найден!")
+        await state.clear()
+        return
 
-    # 2) Пробуем отозвать старый сертификат
-    m1 = await message.answer(f"Удаляем старый профиль: <b>{old_username}</b>...", parse_mode="HTML")
-    result_del = await execute_script("2", cert_to_revoke)
+    # Узнаём сколько дней осталось у старого сертификата
+    old_cert_path = f"/etc/openvpn/easyrsa3/pki/issued/{old_username}.crt"
+    days_left = get_cert_expiry_days(old_cert_path)
 
+    # Удаляем старый сертификат
+    result_del = await execute_script("2", old_username)
     if result_del["returncode"] != 0:
         stderr = result_del.get("stderr", "")
-        if "Unable to revoke as no certificate was found" in stderr:
-            logging.warning(f"No CRT to revoke for {cert_to_revoke}: {stderr}")
-            # продолжаем дальше
-        else:
-            await asyncio.sleep(1)
-            try:
-                await m1.delete()
-            except Exception:
-                pass
-            await message.answer(f"❌ Ошибка удаления старого профиля: {stderr}")
-            await state.clear()
-            return
+        await message.answer(f"❌ Ошибка удаления старого профиля: {stderr}")
+        await state.clear()
+        return
 
-    # 3) Создаём новый профиль на те же дни, что остались
-    days_left = get_cert_expiry_days(cert_path)
-    m2 = await message.answer(f"Создаём новый профиль: <b>{new_username}</b> на {days_left} дней...", parse_mode="HTML")
+    # Создаём новый сертификат
     result_add = await execute_script("1", new_username, str(days_left))
-
-    # Удаляем оба временных сообщения через 1 секунду
-    await asyncio.sleep(1)
-    try:
-        await m1.delete()
-    except Exception:
-        pass
-    try:
-        await m2.delete()
-    except Exception:
-        pass
-
     if result_add["returncode"] != 0:
         await message.answer(f"❌ Ошибка создания нового профиля: {result_add['stderr']}")
         await state.clear()
         return
 
-    # 4) Перегенерируем все файлы
-    await execute_script("7")
+    # Универсально обновляем имя в базе
+    save_profile_name(user_id, new_username)
 
-    # 5) Удаляем ВСЕ старые меню управления!
     await delete_last_menus(message.from_user.id)
-
-    # 6) Показываем только одно новое меню через show_menu (и только show_menu!)
     await show_menu(
         message.from_user.id,
-        "✅ Имя профиля успешно изменено!\n\n"
-        "Теперь вы можете скачать новый конфиг через меню кнопкой 📥 <b>Получить конфиг OpenVPN</b>.",
+        "✅ Имя профиля успешно изменено!\n\nТеперь вы можете скачать новый конфиг через меню кнопкой 📥 <b>Получить конфиг OpenVPN</b>.",
         create_user_menu(new_username, back_callback="users_menu", is_admin=(message.from_user.id == ADMIN_ID))
     )
-
     await state.clear()
+
+
 
 
 
@@ -1506,15 +1542,6 @@ async def start(message: types.Message, state: FSMContext):
             reply_markup=create_user_menu(client_name)
         )
         set_last_menu_id(user_id, msg.message_id)
-        await safe_send_message(
-            ADMIN_ID,
-            f"🆕 <b>Новый пользователь зашёл:</b>\n"
-            f"ID: <code>{user_id}</code>\n"
-            f"Username: @{message.from_user.username}\n"
-            f"Имя: {message.from_user.full_name}\n"
-            f"VPN-профиль: <code>{client_name}</code>",
-            parse_mode="HTML"
-        )
         return
 
     if is_pending(user_id):
@@ -1993,7 +2020,7 @@ async def download_openvpn_config(callback: types.CallbackQuery):
             "1. Скачайте <a href='https://play.google.com/store/apps/details?id=net.openvpn.openvpn'>OpenVPN Connect</a> (Android) или <a href='https://apps.apple.com/app/openvpn-connect/id590379981'>OpenVPN Connect</a> (iOS).\n"
             "2. Импортируйте полученный файл конфигурации (.ovpn).\n"
             "3. Нажмите <b>Подключить</b>.\n\n"
-            "Подробная инструкция: <a href='https://ВСТАВЬ СВОЕ'>ВСТАВЬ СВОЕ</a>",
+            "Подробная инструкция: <a href='https://ВСТАВЬ СВОЕ'>ВСТАВЬ СВОЕ.ru/install/</a>",
             parse_mode="HTML",
             disable_web_page_preview=True
         )
@@ -2402,14 +2429,74 @@ async def process_application(callback: types.CallbackQuery, state: FSMContext):
 async def main():
     print("✅ Бот успешно запущен!")
     try:
-        await update_bot_description()    # длинное описание (My Description)
-        await update_bot_about()          # короткое описание (Short Description)
+        await update_bot_description()
+        await update_bot_about()
         await set_bot_commands()
+        # ← ЗАПУСКАЕМ периодическую задачу
+        asyncio.create_task(notify_expiring_users())
         await dp.start_polling(bot)
     except KeyboardInterrupt:
         print("\n🛑 Бот остановлен")
 
 
+
+async def notify_expiring_users():
+    while True:
+        try:
+            # Пройдемся по всем одобренным пользователям
+            if not os.path.exists(APPROVED_FILE):
+                await asyncio.sleep(12 * 3600)
+                continue
+
+            with open(APPROVED_FILE, "r") as f:
+                approved_users = [line.strip() for line in f if line.strip().isdigit()]
+
+            for user_id in approved_users:
+                user_id_int = int(user_id)
+                client_name = get_profile_name(user_id_int)
+                if not client_name:
+                    continue
+
+                cert_info = get_cert_expiry_info(client_name)
+                if not cert_info:
+                    continue
+
+                days_left = cert_info.get("days_left", 0)
+                notified_flag_file = f".notified_{user_id}.flag"
+                if days_left == 5 and not os.path.exists(notified_flag_file):
+                    # Уведомление юзеру
+                    try:
+                        await bot.send_message(
+                            user_id_int,
+                            "⚠️ <b>Где бабосы? Месяц прошёл почти)</b>\n\n"
+                            "Осталось 5 дней до окончания действия VPN.",
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        print(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
+                    # Уведомление админу
+                    try:
+                        await bot.send_message(
+                            ADMIN_ID,
+                            f"⚠️ Пользователю <code>{user_id}</code> отправлено напоминание о продлении:\n"
+                            "<b>Где бабосы? Месяц прошёл почти)</b>",
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        print(f"Не удалось отправить уведомление админу: {e}")
+                    # Ставим флаг, чтобы не слать повторно
+                    with open(notified_flag_file, "w") as f:
+                        f.write("notified")
+                # Снимаем флаг, если продлил (например, осталось больше 5 дней)
+                elif days_left > 5 and os.path.exists(notified_flag_file):
+                    try:
+                        os.remove(notified_flag_file)
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            print(f"[notify_expiring_users] Ошибка: {e}")
+        await asyncio.sleep(12 * 3600)  # Проверять 2 раза в сутки (можешь изменить)
 
 
 
