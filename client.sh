@@ -44,8 +44,8 @@ setServerHost_FileName(){
 		SERVER_HOST="$1"
 	fi
 
-	FILE_NAME_ANTIZAPRET="БичиVPN - ${CLIENT_NAME}"
-	FILE_NAME_VPN="БичиVPN - Обычный VPN - ${CLIENT_NAME}"
+	FILE_NAME_ANTIZAPRET="ВСТАВЬ СВОЕ - ${CLIENT_NAME}"
+	FILE_NAME_VPN="ВСТАВЬ СВОЕ - Обычный VPN - ${CLIENT_NAME}"
 	FILE_NAME="$CLIENT_NAME"
 }
 
@@ -133,10 +133,10 @@ addOpenVPN(){
 
 	render "/etc/openvpn/client/templates/antizapret-udp.conf" > "/root/antizapret/client/openvpn/antizapret-udp/antizapret-$FILE_NAME-udp.ovpn"
 	render "/etc/openvpn/client/templates/antizapret-tcp.conf" > "/root/antizapret/client/openvpn/antizapret-tcp/antizapret-$FILE_NAME-tcp.ovpn"
-	render "/etc/openvpn/client/templates/antizapret.conf" > "/root/antizapret/client/openvpn/antizapret/БичиVPN - ${FILE_NAME}.ovpn"
+	render "/etc/openvpn/client/templates/antizapret.conf" > "/root/antizapret/client/openvpn/antizapret/ВСТАВЬ СВОЕ - ${FILE_NAME}.ovpn"
 	render "/etc/openvpn/client/templates/vpn-udp.conf" > "/root/antizapret/client/openvpn/vpn-udp/vpn-$FILE_NAME-udp.ovpn"
 	render "/etc/openvpn/client/templates/vpn-tcp.conf" > "/root/antizapret/client/openvpn/vpn-tcp/vpn-$FILE_NAME-tcp.ovpn"
-	render "/etc/openvpn/client/templates/vpn.conf" > "/root/antizapret/client/openvpn/vpn/БичиVPN - Обычный VPN - ${FILE_NAME}.ovpn"
+	render "/etc/openvpn/client/templates/vpn.conf" > "/root/antizapret/client/openvpn/vpn/ВСТАВЬ СВОЕ - Обычный VPN - ${FILE_NAME}.ovpn"
 
 	echo "OpenVPN profile files (re)created for client '$CLIENT_NAME' at /root/antizapret/client/openvpn"
 }
@@ -151,10 +151,10 @@ deleteOpenVPN(){
 	cp ./pki/crl.pem /etc/openvpn/server/keys/crl.pem
 	chmod 644 /etc/openvpn/server/keys/crl.pem
 
-	rm -f //root/antizapret/client/openvpn/vpn/БичиVPN - ${FILE_NAME}.ovpn
+	rm -f //root/antizapret/client/openvpn/vpn/ВСТАВЬ СВОЕ - ${FILE_NAME}.ovpn
 	rm -f /root/antizapret/client/openvpn/antizapret-udp/antizapret-$FILE_NAME-udp.ovpn
 	rm -f /root/antizapret/client/openvpn/antizapret-tcp/antizapret-$FILE_NAME-tcp.ovpn
-	rm -f /root/antizapret/client/openvpn/vpn/БичиVPN - Обычный VPN - ${FILE_NAME}.ovpn
+	rm -f /root/antizapret/client/openvpn/vpn/ВСТАВЬ СВОЕ - Обычный VPN - ${FILE_NAME}.ovpn
 	rm -f /root/antizapret/client/openvpn/vpn-udp/vpn-$FILE_NAME-udp.ovpn
 	rm -f /root/antizapret/client/openvpn/vpn-tcp/vpn-$FILE_NAME-tcp.ovpn
 	rm -f /etc/openvpn/client/keys/$CLIENT_NAME.crt
