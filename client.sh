@@ -229,8 +229,8 @@ addWireGuard(){
 		fi
 	done
 
-	render "/etc/wireguard/templates/antizapret-client-wg.conf" > "/root/antizapret/client/wireguard/antizapret/antizapret-$FILE_NAME-wg.conf"
-	render "/etc/wireguard/templates/antizapret-client-am.conf" > "/root/antizapret/client/amneziawg/antizapret/antizapret-$FILE_NAME-am.conf"
+	render "/etc/wireguard/templates/antizapret-client-wg.conf" > "/root/antizapret/client/wireguard/antizapret/ВСТАВЬ СВОЕ -$FILE_NAME-wg.conf"
+	render "/etc/wireguard/templates/antizapret-client-am.conf" > "/root/antizapret/client/amneziawg/antizapret/ВСТАВЬ СВОЕ -$FILE_NAME-am.conf"
 
 	echo "# Client = ${CLIENT_NAME}
 # PrivateKey = ${CLIENT_PRIVATE_KEY}
@@ -259,8 +259,8 @@ AllowedIPs = ${CLIENT_IP}/32
 		fi
 	done
 
-	render "/etc/wireguard/templates/vpn-client-wg.conf" > "/root/antizapret/client/wireguard/vpn/vpn-$FILE_NAME-wg.conf"
-	render "/etc/wireguard/templates/vpn-client-am.conf" > "/root/antizapret/client/amneziawg/vpn/vpn-$FILE_NAME-am.conf"
+	render "/etc/wireguard/templates/vpn-client-wg.conf" > "/root/antizapret/client/wireguard/vpn/ВСТАВЬ СВОЕ - Обычный VPN -$FILE_NAME-wg.conf"
+	render "/etc/wireguard/templates/vpn-client-am.conf" > "/root/antizapret/client/amneziawg/vpn/ВСТАВЬ СВОЕ - Обычный VPN -$FILE_NAME-am.conf"
 
 	echo "# Client = ${CLIENT_NAME}
 # PrivateKey = ${CLIENT_PRIVATE_KEY}
