@@ -505,16 +505,47 @@ async def server_manage_menu(callback: types.CallbackQuery):
 
 
 @dp.callback_query(lambda c: c.data == "restart_bot")
-async def restart_bot(callback: types.CallbackQuery):
-    msg = await callback.message.answer("♻️ Перезапускаю бота через systemd...")
+async def handle_bot_restart(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Нет доступа!", show_alert=True)
+        return
+    msg = await callback.message.edit_text("♻️ Перезапускаю бота через systemd...")
     await callback.answer()
-    await asyncio.sleep(2)
-    try:
-        await msg.delete()
-    except Exception:
-        pass
-    # Теперь через отдельный процесс делаем задержку и рестарт
-    os.system("nohup bash -c 'sleep 1 && systemctl restart vpnbot.service' &")
+    await asyncio.sleep(1)
+    await msg.delete()
+    await bot.send_message(
+        callback.from_user.id,
+        f"{get_server_info()}\n<b>👨‍💻 Главное меню:</b>",
+        reply_markup=create_main_menu(),
+        parse_mode="HTML"
+    )
+
+    os.system("systemctl restart vpnbot.service")
+
+@dp.callback_query(lambda c: c.data == "reboot_server")
+async def handle_reboot(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Нет доступа!", show_alert=True)
+        return
+    msg = await callback.message.edit_text("🔁 Сервер перезагружается...")
+    await callback.answer()
+    await asyncio.sleep(1)
+    await msg.delete()
+    await bot.send_message(
+        callback.from_user.id,
+        f"{get_server_info()}\n<b>👨‍💻 Главное меню:</b>",
+        reply_markup=create_main_menu(),
+        parse_mode="HTML"
+    )
+    os.system("reboot")
+
+
+def create_server_manage_menu():
+    return types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="♻️ Перезагрузка бота", callback_data="restart_bot")],
+        [types.InlineKeyboardButton(text="🔁 Перезагрузка сервера", callback_data="reboot_server")],
+        [types.InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")],
+    ])
 
 
 
