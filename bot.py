@@ -12,14 +12,21 @@ import asyncio
 import hashlib
 from db import mark_paid, is_paid, init_db, get_profile_name, add_payment, save_profile_name
 
+import glob
 
 init_db()
 import hashlib
 from aiogram import types
+from asyncio import sleep
+from aiogram.filters import StateFilter
 
 import sqlite3
 import uuid
 from aiogram.fsm.state import State, StatesGroup
+
+class SetEmoji(StatesGroup):
+    waiting_for_emoji = State()
+    
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
@@ -52,6 +59,9 @@ USERS_FILE = "users.txt"
 
 LAST_MENU_FILE = "last_menu.json"
 
+class SetEmojiState(StatesGroup):
+    waiting_for_emoji = State()
+    
 # для SQLite
 def save_profile_name(user_id, new_profile_name, db_path="/root/vpn.db"):
     conn = sqlite3.connect(db_path)
@@ -98,6 +108,7 @@ async def safe_send_message(chat_id, text, **kwargs):
     except Exception as e:
         print(f"[Ошибка отправки сообщения] chat_id={chat_id}: {e}")
 
+
 def get_last_menu_ids(user_id):
     if not os.path.exists(LAST_MENUS_FILE):
         return []
@@ -129,7 +140,6 @@ def set_last_menu_id(user_id, msg_id):
         with open(LAST_MENUS_FILE, "r") as f:
             data = json.load(f)
     user_id = str(user_id)
-    # Храним ТОЛЬКО ОДИН последний id!
     data[user_id] = [msg_id]
     with open(LAST_MENUS_FILE, "w") as f:
         json.dump(data, f)
@@ -162,7 +172,6 @@ def is_pending(user_id):
         with open(PENDING_FILE, "r") as f:
             pending = json.load(f)
     except Exception:
-        # Если файл пустой или битый — просто нет pending
         pending = {}
     return str(user_id) in pending
 
@@ -178,7 +187,7 @@ if not BOT_TOKEN:
 if not ADMIN_ID:
     raise RuntimeError("ADMIN_ID не задан в .env")
 ADMIN_ID = int(ADMIN_ID)
-
+EMOJI_FILE = "user_emojis.json"
 LAST_MENUS_FILE = "last_menus.json"
 MAX_MENUS_PER_USER = 3  # или сколько надо, обычно 3-5
 
@@ -231,6 +240,42 @@ def user_registered(user_id):
 
 APPROVED_FILE = "approved_users.txt"
 
+# ==== Эмодзи хранение ====
+@dp.message(StateFilter(SetEmoji.waiting_for_emoji))
+async def set_user_emoji(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    client_name = (await state.get_data())['client_name']
+    emoji = message.text.strip()
+
+    # Удаляем текст "Введи смайл..."
+    try:
+        await message.reply_to_message.delete()
+    except Exception:
+        pass
+
+    if emoji == "❌":
+        set_emoji_for_user(client_name, "")  # твоя функция
+        reply_text = "Смайл удалён"
+    else:
+        set_emoji_for_user(client_name, emoji)  # твоя функция
+        reply_text = f"Установлен смайл: {emoji}"
+
+    # Отправляем и через 2 сек удаляем сообщение
+    info_msg = await message.answer(reply_text)
+    await sleep(2)
+    try:
+        await info_msg.delete()
+    except Exception:
+        pass
+
+    # Показываем меню управления пользователем
+    await show_menu(
+        user_id,
+        f"Меню пользователя <b>{client_name}</b>:",
+        create_user_menu(client_name, back_callback="users_menu", is_admin=(user_id == ADMIN_ID), user_id=user_id)
+    )
+    await state.clear()
+
 def is_approved_user(user_id):
     user_id = str(user_id)
     if not os.path.exists(APPROVED_FILE):
@@ -245,6 +290,21 @@ def approve_user(user_id):
         with open(APPROVED_FILE, "a") as f:
             f.write(user_id + "\n")
 
+def set_user_emoji(user_id, emoji):
+    data = {}
+    if os.path.exists(EMOJI_FILE):
+        with open(EMOJI_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    data[str(user_id)] = emoji
+    with open(EMOJI_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+def get_user_emoji(user_id):
+    if not os.path.exists(EMOJI_FILE):
+        return ""
+    with open(EMOJI_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data.get(str(user_id), "")
 
 async def switch_menu(callback: types.CallbackQuery, text: str, reply_markup=None, parse_mode="HTML"):
     try:
@@ -398,20 +458,14 @@ def get_external_ip():
         return "Ошибка: нет подключения к интернету."
     except requests.RequestException as e:
         return f"Ошибка при запросе: {e}"
-
-
 SERVER_IP = get_external_ip()
 
 def get_server_info():
-    # IP сервера
     ip = SERVER_IP
-    # Аптайм
     uptime_seconds = int(psutil.boot_time())
     uptime = datetime.now() - datetime.fromtimestamp(uptime_seconds)
-    # Загрузка CPU/RAM
     cpu = psutil.cpu_percent()
     mem = psutil.virtual_memory().percent
-    # Имя сервера (hostname)
     hostname = socket.gethostname()
     os_version = platform.platform()
     return f"""<b>💻 Сервер:</b> <code>{hostname}</code>
@@ -422,6 +476,7 @@ def get_server_info():
 <b>🛠 ОС:</b> <code>{os_version}</code>
 """
 
+# ==== Главное меню ====
 def create_main_menu():
     keyboard = [
         [InlineKeyboardButton(text="👥 Управление пользователями", callback_data="users_menu")],
@@ -432,14 +487,6 @@ def create_main_menu():
         [InlineKeyboardButton(text="🛠 Управление сервером", callback_data="server_manage_menu")],
         [InlineKeyboardButton(text="📢 Объявление", callback_data="announce_menu")],
         [InlineKeyboardButton(text="🟢 Кто онлайн", callback_data="who_online")],
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-def create_server_manage_menu():
-    keyboard = [
-        [InlineKeyboardButton(text="🔄 Перезагрузить сервер", callback_data="reboot_server")],
-        [InlineKeyboardButton(text="🔁 Перезапустить бота", callback_data="restart_bot")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -552,7 +599,7 @@ async def add_user_start(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# users_menu - показать всех юзеров (работает только для админа)
+# ==== Список пользователей с эмодзи ====
 @dp.callback_query(lambda c: c.data == "users_menu")
 async def users_menu(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -560,24 +607,310 @@ async def users_menu(callback: types.CallbackQuery):
         return
 
     clients = await get_clients("openvpn")
+    online = get_online_users_from_log()
     if not clients:
         await show_menu(callback.from_user.id, "❌ Нет пользователей.", create_main_menu())
         return
-
     keyboard = []
     for client in clients:
-        # Поиск user_id по имени профиля (нужно реализовать!)
+        if client == "antizapret-client":
+            continue
+        emoji = ""
         user_id = get_user_id_by_name(client)
         if user_id:
-            keyboard.append([InlineKeyboardButton(text=client, callback_data=f"manage_userid_{user_id}")])
+            emoji = get_user_emoji(user_id)
+        online_status = "🟢" if client in online else "🔴"
+        display_name = f"{emoji + ' ' if emoji else ''}{online_status} {client}"
+        if user_id:
+            keyboard.append([
+                InlineKeyboardButton(text=display_name, callback_data=f"manage_userid_{user_id}")
+            ])
         else:
-            # fallback — пусть по имени, если нет user_id
-            keyboard.append([InlineKeyboardButton(text=client, callback_data=f"manage_user_{client}")])
+            keyboard.append([
+                InlineKeyboardButton(text=display_name, callback_data=f"manage_user_{client}")
+            ])
     keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
-
     markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    await show_menu(callback.from_user.id, "Список пользователей. Нажмите на пользователя для управления:", markup)
+    await show_menu(
+        callback.from_user.id,
+        "Список пользователей. Нажмите на пользователя для управления:",
+        markup
+    )
     await callback.answer()
+
+def create_wg_menu(client_name):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="Обычный VPN",
+                callback_data=f"download_wg_vpn_{client_name}"
+            ),
+            InlineKeyboardButton(
+                text="Antizapret (Рекомендую)",
+                callback_data=f"download_wg_antizapret_{client_name}"
+            )
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_user_menu_{client_name}")]
+    ])
+
+def create_amnezia_menu(client_name):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="Обычный VPN",
+                callback_data=f"download_am_vpn_{client_name}"
+            ),
+            InlineKeyboardButton(
+                text="Antizapret (Рекомендую)",
+                callback_data=f"download_am_antizapret_{client_name}"
+            )
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_user_menu_{client_name}")]
+    ])
+
+@dp.callback_query(lambda c: c.data.startswith("get_wg_"))
+async def get_wg_menu(callback: types.CallbackQuery):
+    client_name = callback.data[len("get_wg_"):]
+    await delete_last_menus(callback.from_user.id)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await bot.send_message(
+        callback.from_user.id,
+        "Выберите тип WireGuard-конфига:",
+        reply_markup=create_wg_menu(client_name)
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("get_amnezia_"))
+async def get_amnezia_menu(callback: types.CallbackQuery):
+    client_name = callback.data[len("get_amnezia_"):]
+    await delete_last_menus(callback.from_user.id)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await bot.send_message(
+        callback.from_user.id,
+        "Выберите тип Amnezia-конфига:",
+        reply_markup=create_amnezia_menu(client_name)
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("download_wg_"))
+async def download_wg_config(callback: types.CallbackQuery):
+    parts = callback.data.split("_", 3)
+    _, _, wg_type, client_name = parts
+    user_id = callback.from_user.id
+    username = callback.from_user.username or "Без username"
+
+    if wg_type == "vpn":
+        file_path = f"/root/antizapret/client/wireguard/vpn/ВСТАВЬ СВОЕ - Обычный VPN -{client_name}-wg.conf"
+    else:
+        file_path = f"/root/antizapret/client/wireguard/antizapret/ВСТАВЬ СВОЕ -{client_name}-wg.conf"
+
+    # Генерируем, если нет файла
+    if not os.path.exists(file_path):
+        subprocess.run(['/root/antizapret/client.sh', '4', client_name], check=True)
+
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await delete_last_menus(user_id)
+
+    if os.path.exists(file_path):
+        await bot.send_document(user_id, FSInputFile(file_path), caption=f"🔐 {os.path.basename(file_path)}")
+        await notify_admin_download(user_id, username, os.path.basename(file_path), "wg")
+    else:
+        await bot.send_message(user_id, "❌ Файл не найден")
+
+    await show_menu(
+        user_id,
+        f"Меню пользователя <b>{client_name}</b>:",
+        create_user_menu(client_name, back_callback="users_menu", is_admin=(user_id == ADMIN_ID), user_id=user_id)
+    )
+
+    await callback.answer()
+
+
+
+
+
+
+@dp.callback_query(lambda c: c.data.startswith("download_wg_"))
+async def download_wg_config(callback: types.CallbackQuery):
+    parts = callback.data.split("_", 3)
+    _, _, wg_type, client_name = parts
+    user_id = callback.from_user.id
+    username = callback.from_user.username or "Без username"
+
+    if wg_type == "vpn":
+        file_path = f"/root/antizapret/client/wireguard/vpn/ВСТАВЬ СВОЕ - Обычный VPN -{client_name}-wg.conf"
+    else:
+        file_path = f"/root/antizapret/client/wireguard/antizapret/ВСТАВЬ СВОЕ -{client_name}-wg.conf"
+
+    # Генерируем если нет файла
+    if not os.path.exists(file_path):
+        subprocess.run(['/root/antizapret/client.sh', '4', client_name], check=True)
+
+    # Удаляем старое меню
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await delete_last_menus(user_id)
+
+    # Отправляем файл если есть
+    if os.path.exists(file_path):
+        await bot.send_document(user_id, FSInputFile(file_path), caption=f"🔐 {os.path.basename(file_path)}")
+        await notify_admin_download(user_id, username, os.path.basename(file_path), "wg")
+    else:
+        await bot.send_message(user_id, "❌ Файл не найден")
+
+    await show_menu(
+        user_id,
+        f"Меню пользователя <b>{client_name}</b>:",
+        create_user_menu(client_name, back_callback="users_menu", is_admin=(user_id == ADMIN_ID), user_id=user_id)
+    )
+    await callback.answer()
+
+
+
+
+
+
+# ==== Админ: установка смайла ====
+@dp.callback_query(lambda c: c.data.startswith("set_emoji_"))
+async def set_emoji_start(callback: types.CallbackQuery, state: FSMContext):
+    client_name = callback.data[len("set_emoji_"):]
+    user_id = callback.from_user.id
+    target_user_id = get_user_id_by_name(client_name)
+    if not target_user_id:
+        await callback.answer("Пользователь не найден!", show_alert=True)
+        return
+    await state.set_state(SetEmojiState.waiting_for_emoji)
+    await state.update_data(target_user_id=target_user_id, client_name=client_name)
+
+    # Инлайн-кнопка отмены
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_set_emoji")]
+        ]
+    )
+    msg = await bot.send_message(
+        user_id,
+        "Введи смайл (эмодзи) для этого пользователя, или отправь ❌ чтобы убрать смайл.",
+        reply_markup=markup
+    )
+    # Сохраним id сообщения для удаления
+    await state.update_data(input_message_id=msg.message_id)
+
+@dp.callback_query(lambda c: c.data == "cancel_set_emoji")
+async def cancel_set_emoji(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    msg_id = data.get("input_message_id")
+    client_name = data.get("client_name")
+    try:
+        await callback.bot.delete_message(callback.from_user.id, msg_id)
+    except:
+        pass
+    await callback.answer("Отменено")
+    await state.clear()
+    await show_menu(
+        callback.from_user.id,
+        f"Меню пользователя <b>{client_name}</b>:",
+        create_user_menu(client_name, back_callback="users_menu", is_admin=True, user_id=get_user_id_by_name(client_name))
+    )
+
+
+
+@dp.message(SetEmojiState.waiting_for_emoji)
+async def set_emoji_process(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    target_user_id = data.get("target_user_id")
+    client_name = data.get("client_name")
+    input_msg_id = data.get("input_message_id")
+
+    # Удаляем сообщение с инструкцией
+    try:
+        await message.bot.delete_message(message.from_user.id, input_msg_id)
+    except:
+        pass
+
+    emoji = message.text.strip()
+    if emoji == "❌":
+        set_user_emoji(target_user_id, "")
+        text = "Смайл убран."
+    else:
+        if len(emoji) > 2:
+            warn_msg = await message.answer("❌ Слишком длинный смайл!")
+            await asyncio.sleep(2)
+            await warn_msg.delete()
+            return
+        set_user_emoji(target_user_id, emoji)
+        text = f"Установлен смайл: {emoji}"
+
+    # Вывести уведомление, потом удалить через 2 сек
+    notif = await message.answer(text)
+    await asyncio.sleep(2)
+    try:
+        await notif.delete()
+    except:
+        pass
+
+    await show_menu(
+        message.from_user.id,
+        f"Меню пользователя <b>{client_name}</b>:",
+        create_user_menu(client_name, back_callback="users_menu", is_admin=True, user_id=target_user_id)
+    )
+    await state.clear()
+
+    
+# ==== Выдача WireGuard ====
+@dp.callback_query(lambda c: c.data.startswith("get_wg_"))
+async def send_wg_config(callback: types.CallbackQuery):
+    client_name = callback.data[len("get_wg_"):]
+    user_id = callback.from_user.id
+    await execute_script("4", client_name)
+    file_path = find_conf("/root/antizapret/client/wireguard", client_name)
+    if not file_path:
+        await callback.answer("❌ Файл WG не найден", show_alert=True)
+        return
+    await bot.send_document(
+        user_id,
+        FSInputFile(file_path),
+        caption=f"🔐 WireGuard: {os.path.basename(file_path)}"
+    )
+    await callback.answer("✅ WireGuard-конфиг отправлен.")
+
+    
+def find_conf(base_dir, client_name):
+    # Ищет во всех подпапках и по всем шаблонам
+    patterns = [
+        f"{base_dir}/*/*{client_name}*.conf",
+        f"{base_dir}/*{client_name}*.conf",
+    ]
+    for pattern in patterns:
+        files = glob.glob(pattern)
+        if files:
+            return files[0]
+    return None    
+
+
+def find_wg_conf(client_name):
+    patterns = [
+        f"/root/antizapret/client/wireguard/*/*{client_name}*.conf",
+        f"/root/antizapret/client/wireguard/*{client_name}*.conf",
+    ]
+    for pattern in patterns:
+        files = glob.glob(pattern)
+        if files:
+            return files[0]
+    return None
+
+   
 
 # Новый вариант — по user_id
 @dp.callback_query(lambda c: c.data.startswith("manage_userid_"))
@@ -610,17 +943,13 @@ async def manage_user(callback: types.CallbackQuery, state: FSMContext):
 
 
 def get_user_id_by_name(profile_name):
-    # Если хранишь в json/базе, адаптируй под свою структуру!
-    if not os.path.exists("users.txt"):
-        return None
-    with open("users.txt", "r") as f:
-        for line in f:
-            line = line.strip()
-            if ":" in line:
-                uid, name = line.split(":", 1)
-                if name == profile_name:
-                    return int(uid)
-    return None
+    conn = sqlite3.connect("/root/vpn.db")
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM users WHERE profile_name=?", (profile_name,))
+    res = cur.fetchone()
+    conn.close()
+    return res[0] if res else None
+
 
 
 @dp.callback_query(lambda c: c.data == "7")
@@ -919,6 +1248,59 @@ async def show_menu(user_id, text, reply_markup, parse_mode="HTML"):
     return msg
 
 
+@dp.callback_query(lambda c: c.data.startswith("get_amnezia_"))
+async def send_amnezia_config(callback: types.CallbackQuery):
+    client_name = callback.data[len("get_amnezia_"):]
+    user_id = callback.from_user.id
+    # Всегда создавать/пересоздавать перед выдачей!
+    await execute_script("4", client_name)
+    file_path = find_conf("/root/antizapret/client/amneziawg", client_name)
+    if not file_path:
+        await callback.answer("❌ Файл Amnezia не найден", show_alert=True)
+        return
+    await bot.send_document(
+        user_id,
+        FSInputFile(file_path),
+        caption=f"🔐 Amnezia: {os.path.basename(file_path)}"
+    )
+    await callback.answer("✅ Amnezia-конфиг отправлен.")
+
+
+
+@dp.callback_query(lambda c: c.data.startswith("download_am_"))
+async def download_amnezia_config(callback: types.CallbackQuery):
+    parts = callback.data.split("_", 3)
+    _, _, am_type, client_name = parts
+    user_id = callback.from_user.id
+    username = callback.from_user.username or "Без username"
+
+    if am_type == "vpn":
+        file_path = f"/root/antizapret/client/amneziawg/vpn/ВСТАВЬ СВОЕ - Обычный VPN -{client_name}-am.conf"
+    else:
+        file_path = f"/root/antizapret/client/amneziawg/antizapret/ВСТАВЬ СВОЕ -{client_name}-am.conf"
+
+    if not os.path.exists(file_path):
+        subprocess.run(['/root/antizapret/client.sh', '4', client_name], check=True)
+
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await delete_last_menus(user_id)
+
+    if os.path.exists(file_path):
+        await bot.send_document(user_id, FSInputFile(file_path), caption=f"🔐 {os.path.basename(file_path)}")
+        await notify_admin_download(user_id, username, os.path.basename(file_path), "amnezia")
+    else:
+        await bot.send_message(user_id, "❌ Файл не найден")
+
+    await show_menu(
+        user_id,
+        f"Меню пользователя <b>{client_name}</b>:",
+        create_user_menu(client_name, back_callback="users_menu", is_admin=(user_id == ADMIN_ID), user_id=user_id)
+    )
+
+    await callback.answer()
 
 
 
@@ -1076,7 +1458,7 @@ async def renew_user_start(callback: types.CallbackQuery, state: FSMContext):
 
 
 
-import subprocess
+
 from datetime import datetime, timezone
 
 def get_cert_expiry_info(client_name):
@@ -1210,24 +1592,31 @@ async def process_renew_days(message: types.Message, state: FSMContext):
 
 
 
-# Меню для пользователей
-def create_user_menu(client_name, back_callback=None, is_admin=False):
+# ==== Меню управления пользователем (с эмодзи и WG/Amnezia кнопками) ====
+def create_user_menu(client_name, back_callback=None, is_admin=False, user_id=None):
+    emoji = ""
+    if user_id:
+        emoji = get_user_emoji(user_id)
+    menu_title = f"{emoji + ' ' if emoji else ''}{client_name}"
     keyboard = [
         [InlineKeyboardButton(text="📊 Статистика", callback_data=f"user_stats_{client_name}")],
         [InlineKeyboardButton(text="📥 Получить конфиг OpenVPN", callback_data=f"select_openvpn_{client_name}")],
+        [InlineKeyboardButton(text="🌐 Получить WireGuard", callback_data=f"get_wg_{client_name}")],
+        [InlineKeyboardButton(text="🦄 Получить Amnezia", callback_data=f"get_amnezia_{client_name}")],
+        [InlineKeyboardButton(text="📬 Получить VLESS", callback_data=f"get_vless_{client_name}")],
         [InlineKeyboardButton(text="✏️ Изменить имя профиля", callback_data=f"rename_profile_{client_name}")]
     ]
-    # Только для обычных пользователей!
-    if not is_admin:
-        keyboard.append([InlineKeyboardButton(text="💬 Связь с поддержкой", url="https://t.me/ВСТАВЬ СВОЕ")])
-        keyboard.append([InlineKeyboardButton(text="ℹ️ Как пользоваться", url="https://ВСТАВЬ СВОЕ")])  # <<-- теперь только юзеру!
-    # Кнопки только для админа
     if is_admin:
+        keyboard.append([InlineKeyboardButton(text="🤡 Установить смайл", callback_data=f"set_emoji_{client_name}")])
         keyboard.append([InlineKeyboardButton(text="✏️ Установить срок действия", callback_data=f"renew_user_{client_name}")])
         keyboard.append([InlineKeyboardButton(text="❌ Удалить пользователя", callback_data=f"delete_user_{client_name}")])
         if back_callback:
             keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)])
+    else:
+        keyboard.append([InlineKeyboardButton(text="💬 Связь с поддержкой", url="https://t.me/ВСТАВЬ СВОЕ")])
+        keyboard.append([InlineKeyboardButton(text="ℹ️ Как пользоваться", url="=ВСТАВЬ СВОЕ/install/")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
 
 
 @dp.callback_query(lambda c: c.data.startswith("delete_user_"))
@@ -1331,12 +1720,15 @@ async def get_config_stats(client_name):
 #Статистика пользователя
 @dp.callback_query(lambda c: c.data.startswith("user_stats_"))
 async def user_stats(callback: types.CallbackQuery):
-    client_name = callback.data.split("_", 2)[-1]
+    client_name = callback.data[len("user_stats_"):]
+    user_id = callback.from_user.id
+
+    # Собираем блок с информацией о сертификате
     cert_info = get_cert_expiry_info(client_name)
     if cert_info:
         date_from_str = cert_info["date_from"].strftime('%d.%m.%Y')
-        date_to_str = cert_info["date_to"].strftime('%d.%m.%Y')
-        days_left = cert_info["days_left"]
+        date_to_str   = cert_info["date_to"].strftime('%d.%m.%Y')
+        days_left     = cert_info["days_left"]
         cert_block = (
             f"<b>Срок действия:</b>\n"
             f"• С {date_from_str} по {date_to_str}\n"
@@ -1344,24 +1736,34 @@ async def user_stats(callback: types.CallbackQuery):
         )
     else:
         cert_block = "<b>Срок действия:</b> неизвестно\n"
-    
     text = cert_block
 
+    # 1) Удаляем текущее сообщение (например, окно «Выберите тип» или старый stats-экран)
+    await delete_last_menus(user_id)
     try:
-        await callback.message.edit_text(
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    # 2) Показываем новое «Меню управления клиентом» через show_menu():
+    if user_id == ADMIN_ID:
+        # Админу — с кнопкой «⬅️ Назад» к списку пользователей
+        await show_menu(
+            user_id,
             text,
-            reply_markup=create_user_menu(
-                client_name,
-                back_callback="users_menu",
-                is_admin=(callback.from_user.id == ADMIN_ID)
-            )
+            create_user_menu(client_name, back_callback="users_menu", is_admin=True)
         )
-    except Exception as e:
-        if "message is not modified" in str(e):
-            await callback.answer("Уже самая свежая статистика 👌", show_alert=False)
-        else:
-            raise
+    else:
+        # Обычному юзеру — без кнопки «Назад»
+        await show_menu(
+            user_id,
+            text,
+            create_user_menu(client_name, is_admin=False)
+        )
+
     await callback.answer()
+
+
 
 
 
@@ -1448,11 +1850,11 @@ def get_online_users_from_log():
 async def who_online(callback: types.CallbackQuery):
     online = get_online_users_from_log()
     if online:
-        # Удаляем старое меню
         try:
             await callback.message.delete()
-        except Exception:
+        except:
             pass
+
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [types.InlineKeyboardButton(text=f"• {u}", callback_data=f"manage_online_{u}")]
@@ -1464,41 +1866,34 @@ async def who_online(callback: types.CallbackQuery):
     else:
         try:
             await callback.message.delete()
-        except Exception:
+        except:
             pass
         await bot.send_message(callback.from_user.id, "❌ Сейчас нет никого онлайн", reply_markup=create_main_menu())
     await callback.answer()
 
 
 
+
 @dp.callback_query(lambda c: c.data.startswith("manage_online_"))
 async def manage_online_user(callback: types.CallbackQuery):
-    client_name = callback.data.split("_", 2)[-1]
+    client_name = callback.data[len("manage_online_"):]
     user_id = callback.from_user.id
 
-    # УДАЛЯЕМ ВСЕ СТАРЫЕ МЕНЮ — это обязательно!
+    # Удаляем все старые меню
     await delete_last_menus(user_id)
     try:
-        await callback.message.delete()  # <- добавь это, если не было!
+        await callback.message.delete()
     except Exception:
         pass
 
-    keyboard = [
-        [types.InlineKeyboardButton(text="📊 Статистика", callback_data=f"user_stats_{client_name}")],
-        [types.InlineKeyboardButton(text="📥 Получить конфиг OpenVPN", callback_data=f"select_openvpn_{client_name}")],
-        [types.InlineKeyboardButton(text="✏️ Изменить имя профиля", callback_data=f"rename_profile_{client_name}")]
-    ]
-    if user_id == ADMIN_ID:
-        keyboard.append([types.InlineKeyboardButton(text="✏️ Установить срок действия", callback_data=f"renew_user_{client_name}")])
-        keyboard.append([types.InlineKeyboardButton(text="❌ Удалить пользователя", callback_data=f"delete_user_{client_name}")])
-        keyboard.append([types.InlineKeyboardButton(text="⬅️ Назад", callback_data="who_online")])
-    else:
-        keyboard.append([types.InlineKeyboardButton(text="ℹ️ Как пользоваться", url="https://ВСТАВЬ СВОЕ")])
-
-    markup = types.InlineKeyboardMarkup(inline_keyboard=keyboard)
-    # Используем show_menu для управления last_menu.json
-    await show_menu(user_id, f"Управление клиентом <b>{client_name}</b>:", markup)
+    # Везде используем единый create_user_menu, но с back_callback="who_online"
+    await show_menu(
+        user_id,
+        f"Управление клиентом <b>{client_name}</b>:",
+        create_user_menu(client_name, back_callback="who_online", is_admin=(user_id == ADMIN_ID))
+    )
     await callback.answer()
+
 
 
 
@@ -1539,7 +1934,7 @@ async def start(message: types.Message, state: FSMContext):
         msg = await message.answer(
             f"Привет, <b>твой VPN-аккаунт активирован!</b>\n\n"
             "Выбери действие ниже:",
-            reply_markup=create_user_menu(client_name)
+            reply_markup=create_user_menu(client_name, user_id=user_id)
         )
         set_last_menu_id(user_id, msg.message_id)
         return
@@ -1641,11 +2036,148 @@ async def handle_main_menu(callback: types.CallbackQuery, state: FSMContext):
 
 
 
-@dp.callback_query(lambda c: c.data == "no_action")
-async def handle_no_action(callback: types.CallbackQuery):
-    await callback.answer(
-        "В разработке", show_alert=False
-    )  # Просто закрываем всплывающее окно
+
+
+# 2) Обработчик «Получить VLESS» — учитываем контекст: обычный юзер или админ
+@dp.callback_query(lambda c: c.data.startswith("get_vless_"))
+async def send_vless_link(callback: types.CallbackQuery):
+    client_name = callback.data.split("_", 2)[-1]
+    user_id = callback.from_user.id
+
+    # Удаляем всё предыдущие меню
+    await delete_last_menus(user_id)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    vless_link = (
+        "ВСТАВЬ СВОЕ в кавычках главное чтоб была ссылка на VLESS"
+    )
+
+    # Текст инструкции с «крупными» заголовками и смайлами
+    text = (
+        f"🔐 <b>Ссылка для подключения VLESS:</b>\n\n"
+        f"<code>{vless_link}</code>\n\n"
+        f"<b>📱 🤖 ANDROID:</b>\n"
+        f"• <a href=\"https://play.google.com/store/apps/details?id=com.v2ray.ang\">v2rayNG</a>  \n"
+        f"  • Установка из Google Play → Открыть → «+» → «Вставить URL» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
+        f"• <a href=\"https://github.com/NeKoStudio/NeKoBox/releases\">NekoBox</a>  \n"
+        f"  • Скачайте APK с GitHub Releases → Установите → Запустите → «Добавить» → «URL-профиль» → Вставить ссылку → Сохранить → «▶».  \n\n"
+        f"• <a href=\"https://github.com/yanue/v2ray-tun/releases\">v2RayTun</a>  \n"
+        f"  • Скачайте APK с GitHub Releases → Установите → «Конфигурации» → «Добавить» → «Из буфера» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
+        f"<b>📱 🍎 iOS:</b>\n"
+        f"• <a href=\"https://apps.apple.com/app/streisand/id1480384826\">Streisand</a>  \n"
+        f"  • Установка из App Store → Открыть → «Конфигурации» → «Добавить профиль по ссылке» → Вставить ссылку → Сохранить → «Connect».  \n\n"
+        f"• <a href=\"https://apps.apple.com/app/foxray-pro-v2ray-vpn/id1524976027\">FoXray</a>  \n"
+        f"  • App Store → Установить → «+» → «Вставить URL» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
+        f"• <a href=\"https://apps.apple.com/app/shadowrocket/id932747118\">Shadowrocket</a>  \n"
+        f"  • App Store (платно) → «Профили» → «+» → «Добавить вручную» → «URL» → Вставить ссылку → Сохранить → Включить.  \n\n"
+        f"• <a href=\"https://apps.apple.com/app/v2box-v2ray-client/id1509268488\">V2Box – V2ray Client</a>  \n"
+        f"  • App Store → «Профиль» → «Добавить» → «Добавить из URL» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
+        f"• <a href=\"https://apps.apple.com/app/v2raytun-app/id1601032123\">v2RayTun</a>  \n"
+        f"  • App Store → Установить → «Конфигурации» → «Импортировать URL» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
+        f"<b>💻 🪟 WINDOWS:</b>\n"
+        f"• <a href=\"https://github.com/V2rayXS/Furious/releases\">Furious</a>  \n"
+        f"  • Скачайте .exe с GitHub Releases → Установите → «Profiles» → «Import URL» → Вставить ссылку → Сохранить → «Connect».  \n\n"
+        f"• <a href=\"https://github.com/AloneGuid/InvisibleMan-XRayClient/releases\">InvisibleMan-XRayClient</a>  \n"
+        f"  • Скачайте .zip → Распакуйте → Запустите .exe → «+» → «Import from URL» → Вставить ссылку → Сохранить → «▶».  \n\n"
+        f"• <a href=\"https://github.com/Nekoray/Nekoray/releases\">Nekoray</a>  \n"
+        f"  • Скачайте portable-версию .zip → Распакуйте → Запустите Nekoray.exe → «Profiles» → «Import URL» → Вставить ссылку → Сохранить → «Start».  \n\n"
+        f"<b>💻 🍏 macOS:</b>\n"
+        f"• <a href=\"https://apps.apple.com/app/v2box-v2ray-client/id1509268488\">V2Box – V2ray Client</a>  \n"
+        f"  • App Store → Установить → «Профили» → «+» → «Добавить URL» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
+        f"• <a href=\"https://apps.apple.com/app/foxray-pro-v2ray-vpn/id1524976027\">FoXray</a>  \n"
+        f"  • Как на iOS: App Store → «+» → «Вставить URL» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
+        f"• <a href=\"https://apps.apple.com/app/streisand/id1480384826\">Streisand</a>  \n"
+        f"  • App Store → «Добавить конфигурацию по URL» → Вставить ссылку → Сохранить → «Connect».  \n\n"
+        f"• <a href=\"https://apps.apple.com/app/v2rayxs/id1522326938\">V2RayXS</a>  \n"
+        f"  • App Store → Установить → «Import» → «From URL» → Вставить ссылку → Сохранить → «Start».  \n\n"
+        f"• <a href=\"https://github.com/NeKoray/NekoRay/releases\">NekoRay/NekoBox for macOS</a>  \n"
+        f"  • Скачайте .dmg с GitHub Releases → Установите → Откройте → «+» → «Import URL» → Вставить ссылку → Сохранить → «Start».  \n\n"
+        f"• <a href=\"https://github.com/V2rayXS/Furious/releases\">Furious</a>  \n"
+        f"  • Скачайте .dmg → Установите → Запустите Furious.app → «Profiles» → «Import URL» → Вставить ссылку → «Connect».  \n"
+    )
+
+    # Кнопка «⬅️ Назад» для возврата в меню управления данного пользователя
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_user_menu_{client_name}")]
+        ]
+    )
+
+    await bot.send_message(
+        user_id,
+        text,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+
+@dp.callback_query(lambda c: c.data.startswith("back_to_user_menu_"))
+async def back_to_user_menu(callback: types.CallbackQuery):
+    client_name = callback.data[len("back_to_user_menu_"):]
+    user_id = callback.from_user.id
+
+    # Удаляем всё, что там было
+    await delete_last_menus(user_id)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    # Возвращаемся в меню управления клиентом
+    await show_menu(
+        user_id,
+        f"Управление клиентом <b>{client_name}</b>:",
+        create_user_menu(client_name, back_callback="users_menu", is_admin=(user_id == ADMIN_ID))
+    )
+    await callback.answer()
+
+
+    
+
+@dp.callback_query(lambda c: c.data.startswith("cancel_openvpn_") or c.data == "select_openvpn_back")
+async def back_from_openvpn(callback: types.CallbackQuery, state: FSMContext):
+    # Разбираем callback.data:
+    # если data = "cancel_openvpn_config_<client_name>"
+    if callback.data.startswith("cancel_openvpn_config_"):
+        client_name = callback.data[len("cancel_openvpn_config_"):]
+    # (редкий случай) если data = "cancel_openvpn_<client_name>"
+    elif callback.data.startswith("cancel_openvpn_"):
+        client_name = callback.data[len("cancel_openvpn_"):]
+    else:
+        # Вариант "select_openvpn_back"
+        data = await state.get_data()
+        client_name = data.get("client_name")
+        if not client_name:
+            stats = get_server_info()
+            await show_menu(callback.from_user.id, stats + "\n<b>Главное меню:</b>", create_main_menu())
+            await callback.answer()
+            return
+
+    user_id = callback.from_user.id
+
+    # Удаляем текущее меню
+    await delete_last_menus(user_id)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    # Возвращаемся в меню управления этим клиентом (заголовок без "config_")
+    await show_menu(
+        user_id,
+        f"Управление клиентом <b>{client_name}</b>:",
+        create_user_menu(client_name, back_callback="users_menu", is_admin=(user_id == ADMIN_ID))
+    )
+    await state.clear()
+    await callback.answer()
+
+ 
 
 
 @dp.callback_query(lambda c: c.data.startswith("client_"))
@@ -1682,42 +2214,33 @@ async def handle_interface_selection(callback: types.CallbackQuery, state: FSMCo
     user_data = await state.get_data()
     client_name = user_data["client_name"]
     vpn_type = user_data["vpn_type"]
+    user_id = callback.from_user.id
 
-    # Обработка кнопки "Назад"
-    if callback.data == "back_to_client_list":
-        clients = await get_clients(vpn_type)
-        total_pages = (len(clients) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    # Обработка клавиши «⬅️ Назад» (в create_openvpn_config_menu прописан callback "cancel_openvpn_<client_name>")
+    if callback.data == f"cancel_openvpn_config_{client_name}" or callback.data == f"cancel_openvpn_{client_name}":
+        # Удаляем этот экран
+        await delete_last_menus(user_id)
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
 
-        await callback.message.edit_text(
-            "Список клиентов:",
-            reply_markup=create_client_list_keyboard(
-                clients, 1, total_pages, vpn_type, "list"
-            ),
-        )
-        await state.set_state(VPNSetup.list_for_delete)
+        # Возвращаемся в меню управления клиентом
+        if user_id == ADMIN_ID:
+            await show_menu(
+                user_id,
+                f"Управление клиентом <b>{client_name}</b>:",
+                create_user_menu(client_name, back_callback="users_menu", is_admin=True)
+            )
+        else:
+            await show_menu(
+                user_id,
+                f"Меню пользователя <b>{client_name}</b>:",
+                create_user_menu(client_name, is_admin=False)
+            )
+        await state.clear()
         await callback.answer()
         return
-
-    if callback.data.startswith("openvpn_config_"):
-        _, _, interface, _ = callback.data.split("_", 3)
-        await state.update_data(interface=interface)
-        await callback.message.delete()
-        await bot.send_message(
-            callback.from_user.id,
-            f"OpenVPN ({interface}): выберите протокол:",
-            reply_markup=create_openvpn_protocol_menu(interface, client_name),
-        )
-        await state.set_state(VPNSetup.choosing_protocol)
-        await state.set_state(VPNSetup.choosing_protocol)
-    else:
-        _, _, interface, _ = callback.data.split("_", 3)
-        await state.update_data(interface=interface)
-        await callback.message.edit_text(
-            f"WireGuard ({interface}): выберите тип:",
-            reply_markup=create_wireguard_type_menu(interface, client_name),
-        )
-        await state.set_state(VPNSetup.choosing_wg_type)
-    await callback.answer()
 
 
 @dp.callback_query(VPNSetup.choosing_protocol)
@@ -1957,12 +2480,33 @@ async def select_openvpn_config(callback: types.CallbackQuery):
 
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Обычный VPN", callback_data=f"download_openvpn_vpn_{client_name}")],
-        [InlineKeyboardButton(text="Antizapret (рекомендуется)", callback_data=f"download_openvpn_antizapret_{client_name}")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"user_stats_{client_name}")]
+        [InlineKeyboardButton(text="Antizapret (Рекомендуется)", callback_data=f"download_openvpn_antizapret_{client_name}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_user_menu_{client_name}")]
     ])
 
-    await callback.message.delete()
-    await bot.send_message(callback.from_user.id, "Выберите тип конфигурации OpenVPN:", reply_markup=markup)
+    # Удаляем предыдущие меню
+    await delete_last_menus(callback.from_user.id)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    # Добавляем ссылку на инструкцию перед кнопками
+    text = (
+        "Выберите тип конфигурации OpenVPN:\n\n"
+        "📖 <a href=\"ВСТАВЬ СВОЕ install/\">Инструкция по подключению для 🍎Apple, 🤖Android и 🖥PC</a>"
+    )
+
+    await bot.send_message(
+        callback.from_user.id,
+        text,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=markup
+    )
+    await callback.answer()
+
+
 
 def get_openvpn_filename(client_name, config_type):
     if config_type == "vpn":
@@ -1975,15 +2519,18 @@ def get_openvpn_filename(client_name, config_type):
 @dp.callback_query(lambda c: c.data.startswith("download_openvpn_"))
 async def download_openvpn_config(callback: types.CallbackQuery):
     parts = callback.data.split("_", 3)
-    if len(parts) != 4:
-        await callback.answer("❌ Ошибка callback_data", show_alert=True)
-        return
     _, _, config_type, client_name = parts
+    user_id = callback.from_user.id
+    username = callback.from_user.username or "Без username"
 
-    if config_type not in ("vpn", "antizapret"):
-        await callback.answer(f"❌ Неизвестный тип: {config_type}", show_alert=True)
-        return
+    # Удаляем прошлые inline-сообщения
+    await delete_last_menus(user_id)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
 
+    # Определяем пути
     if config_type == "vpn":
         file_name = f"ВСТАВЬ СВОЕ - Обычный VPN - {client_name}.ovpn"
         base_path = "/root/antizapret/client/openvpn/vpn/"
@@ -1993,56 +2540,35 @@ async def download_openvpn_config(callback: types.CallbackQuery):
 
     file_path = os.path.join(base_path, file_name)
 
-    # Удаляем все старые меню + само меню "выберите тип" (это и есть callback.message)
-    await delete_last_menus(callback.from_user.id)
-    try:
-        await callback.message.delete()  # <- важно!
-    except Exception:
-        pass
-
     if os.path.exists(file_path):
         await bot.send_document(
-            callback.from_user.id,
+            user_id,
             FSInputFile(file_path),
             caption=f"🔐 {os.path.basename(file_path)}"
         )
         await callback.answer("✅ Конфигурация отправлена.")
-        await safe_send_message(
-            ADMIN_ID,
-            f"📥 <b>Скачивание конфига</b>\n"
-            f"Пользователь: <a href='tg://user?id={callback.from_user.id}'>{callback.from_user.id}</a> (@{callback.from_user.username})\n"
-            f"Файл: <code>{os.path.basename(file_path)}</code>",
-            parse_mode="HTML"
-        )
-        await bot.send_message(
-            callback.from_user.id,
-            "📲 <b>Как подключиться к OpenVPN</b>\n"
-            "1. Скачайте <a href='https://play.google.com/store/apps/details?id=net.openvpn.openvpn'>OpenVPN Connect</a> (Android) или <a href='https://apps.apple.com/app/openvpn-connect/id590379981'>OpenVPN Connect</a> (iOS).\n"
-            "2. Импортируйте полученный файл конфигурации (.ovpn).\n"
-            "3. Нажмите <b>Подключить</b>.\n\n"
-            "Подробная инструкция: <a href='https://ВСТАВЬ СВОЕ'>ВСТАВЬ СВОЕ.ru/install/</a>",
-            parse_mode="HTML",
-            disable_web_page_preview=True
-        )
+
+        # Уведомление админу
+        await notify_admin_download(user_id, username, os.path.basename(file_path), "ovpn")
+
+        # Кнопка назад
         markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"select_openvpn_{client_name}")]
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"cancel_openvpn_config_{client_name}")]
         ])
-        await show_menu(
-            callback.from_user.id,
-            "Вернуться к выбору типа конфига:",
-            markup
-        )
+        await show_menu(user_id, "Вернуться к выбору типа конфига:", markup)
     else:
         markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"select_openvpn_{client_name}")]
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"cancel_openvpn_config_{client_name}")]
         ])
+        files_list = os.listdir(base_path) if os.path.exists(base_path) else []
         await show_menu(
-            callback.from_user.id,
+            user_id,
             f"❌ Не найден файл {file_name} в папке {base_path}\n"
-            f"Файлы в папке: {os.listdir(base_path) if os.path.exists(base_path) else 'Нет такой папки'}",
+            f"Файлы в папке: {files_list}",
             markup
         )
         await callback.answer("❌ Файл конфигурации не найден.", show_alert=True)
+
 
 
 
@@ -2387,6 +2913,25 @@ async def handle_callback_query(callback: types.CallbackQuery, state: FSMContext
         print(f"Error: {e}")
         await callback.answer("⚠️ Произошла ошибка!")
 
+
+async def notify_admin_download(user_id, username, file_name, vpn_type):
+    vpn_emoji = "📥"
+    vpn_text = {
+        "wg": "WireGuard",
+        "amnezia": "Amnezia",
+        "ovpn": "OpenVPN"
+    }
+    text = (
+        f"{vpn_emoji} Скачивание конфига\n"
+        f"Пользователь: <code>{user_id}</code> (@{username})\n"
+        f"Файл: {file_name}"
+    )
+    try:
+        await bot.send_message(ADMIN_ID, text, parse_mode="HTML")
+    except Exception as e:
+        print(f"Ошибка при отправке уведомления админу: {e}")
+
+
 @dp.callback_query(lambda c: c.data.startswith("approve_") or c.data.startswith("reject_"))
 async def process_application(callback: types.CallbackQuery, state: FSMContext):
     action, user_id = callback.data.split("_", 1)
@@ -2426,17 +2971,11 @@ async def process_application(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
 
 
+# ==== Старт бота ====
 async def main():
     print("✅ Бот успешно запущен!")
-    try:
-        await update_bot_description()
-        await update_bot_about()
-        await set_bot_commands()
-        # ← ЗАПУСКАЕМ периодическую задачу
-        asyncio.create_task(notify_expiring_users())
-        await dp.start_polling(bot)
-    except KeyboardInterrupt:
-        print("\n🛑 Бот остановлен")
+    # ... update_bot_description(), update_bot_about(), set_bot_commands()
+    await dp.start_polling(bot)
 
 
 
