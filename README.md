@@ -1,7 +1,7 @@
 # TG-Bot-OpenVPN-Antizapret
 
 ---
-# Бот рабочий и юзабельный, но для идеала нужно допиливать
+# Бот рабочий и юзабельный
 ---
 Добавил Webpanel https://github.com/VATAKATru61/Open-VPN-WebPanel-for-Antizapret/
 
