@@ -10,20 +10,14 @@ import sys
 import requests
 import asyncio
 import hashlib
-from db import mark_paid, is_paid, init_db, get_profile_name, add_payment, save_profile_name
-
 import glob
-
-init_db()
 import hashlib
 from aiogram import types
 from asyncio import sleep
 from aiogram.filters import StateFilter
-
 import sqlite3
 import uuid
 from aiogram.fsm.state import State, StatesGroup
-
 class SetEmoji(StatesGroup):
     waiting_for_emoji = State()
     
@@ -38,10 +32,13 @@ class RenameProfile(StatesGroup):
     waiting_for_new_name = State()
     waiting_for_rename_approve = State()  # Новое состояние для одобрения с новым именем
 
+from db import init_db, get_profile_name, save_profile_name
+
+DB_PATH = "vpn.db"
+init_db(DB_PATH)
 
 import subprocess
 from datetime import datetime, timedelta, timezone
-from db import save_profile_name
 import psutil
 import platform
 import socket
