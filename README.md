@@ -23,8 +23,8 @@
 Тут я опишу что и как и куда добавить
 
 ---
-- Файл .env в папку root/    :exclamation::exclamation::exclamation:"ВСТАВЬ СВОЕ":exclamation::exclamation::exclamation:
-- Файл bot.py в папку root/ :exclamation::exclamation::exclamation:"ВСТАВЬ СВОЕ":exclamation::exclamation::exclamation:
+- Файл .env в папку root/   "ВСТАВЬ СВОЕ"
+- Файл bot.py в папку root/ "ВСТАВЬ СВОЕ"
 - Свое я там убрал и заменил текст на :exclamation::exclamation::exclamation:"ВСТАВЬ СВОЕ":exclamation::exclamation::exclamation: просто поиском можешь найти эти строки и вставить туда всё свое
 - antizapret.conf в папку /etc/openvpn/client/templates :exclamation::exclamation::exclamation:"ВСТАВЬ СВОЕ":exclamation::exclamation::exclamation:
 - Строка 15 Ваше навание в клиенте
