@@ -228,7 +228,8 @@ if not ADMIN_ID or ADMIN_ID == "<Enter your user ID>":
 
 class VPNSetup(StatesGroup):
     """Класс состояний для управления процессами настройки VPN через бота."""
-
+    entering_user_id = State()        # ждём, что админ введёт Telegram-ID
+    entering_client_name_manual = State()  # ждём, что админ введёт имя профиля для этого ID
     choosing_option = State()  # Состояние выбора опции (добавление/удаление клиента).
     entering_client_name = State()  # Состояние ввода имени клиента.
     entering_days = State()  # Состояние ввода количества дней для сертификата.
@@ -872,16 +873,153 @@ async def show_pending_list(callback: types.CallbackQuery):
 
 @dp.callback_query(lambda c: c.data == "add_user")
 async def add_user_start(callback: types.CallbackQuery, state: FSMContext):
-    await delete_last_menus(callback.from_user.id)  # Чистим старые меню!
-    await state.update_data(action="1")  # <-- вот ЭТО!
+    # 1) чистим старые меню у админа
+    await delete_last_menus(callback.from_user.id)
+
+    # 2) просим ввести Telegram-ID нового пользователя (цифрами)
     msg = await bot.send_message(
         callback.from_user.id,
-        "Введите имя нового пользователя:",
+        "✏️ Введите Telegram-ID нового пользователя (только цифры).",
         reply_markup=cancel_markup
     )
-    await state.update_data(add_user_msg_id=msg.message_id)
-    await state.set_state(VPNSetup.entering_client_name)
+    # запоминаем ID сообщения, чтобы потом его удалить (если нажали ❌)
+    await state.update_data(manual_add_msg_id=msg.message_id)
+
+    # 3) переводим FSM в состояние ожидания ID
+    await state.set_state(VPNSetup.entering_user_id)
+
     await callback.answer()
+
+@dp.message(VPNSetup.entering_user_id)
+async def process_manual_user_id(message: types.Message, state: FSMContext):
+    user_id_text = message.text.strip()
+    data = await state.get_data()
+    prev_msg_id = data.get("manual_add_msg_id")
+
+    # 1) удаляем подсказку “введите Telegram-ID…”
+    if prev_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prev_msg_id)
+        except Exception:
+            pass
+
+    # 2) если нажали ❌, отменяем
+    if user_id_text == "❌" or user_id_text.lower() == "отмена":
+        await state.clear()
+        await delete_last_menus(message.from_user.id)
+        stats = get_server_info()
+        await show_menu(message.from_user.id, stats + "\n<b>Главное меню:</b>", create_main_menu())
+        return
+
+    # 3) проверяем, что это действительно цифры
+    if not user_id_text.isdigit():
+        warn = await message.answer("❌ Некорректный ID. Нужно ввести только цифры.", reply_markup=cancel_markup)
+        await asyncio.sleep(1.5)
+        try: await warn.delete()
+        except: pass
+        # повторно запрашиваем ввод
+        msg = await bot.send_message(
+            message.chat.id,
+            "✏️ Пожалуйста, введите корректный Telegram-ID (только цифры):",
+            reply_markup=cancel_markup
+        )
+        await state.update_data(manual_add_msg_id=msg.message_id)
+        return
+
+    # 4) запоминаем user_id и просим ввести имя профиля
+    manual_user_id = int(user_id_text)
+    await state.update_data(manual_user_id=manual_user_id)
+
+    # удаляем сообщение пользователя (с цифрами)
+    try:
+        await message.delete()
+    except:
+        pass
+
+    # просим ввести имя профиля (латиница, цифры, _ и -)
+    msg2 = await bot.send_message(
+        message.chat.id,
+        f"✏️ Теперь введите <b>имя профиля</b> для этого пользователя (латиница, цифры, _ или -), длиною до 32 символов.\n\n"
+        f"Имя профиля понадобится для OpenVPN/WG/Amnezia (название сертификата).",
+        parse_mode="HTML",
+        reply_markup=cancel_markup
+    )
+    await state.update_data(manual_add_msg_id=msg2.message_id)
+    await state.set_state(VPNSetup.entering_client_name_manual)
+
+@dp.message(VPNSetup.entering_client_name_manual)
+async def process_manual_client_name(message: types.Message, state: FSMContext):
+    client_name = message.text.strip()
+    data = await state.get_data()
+    prev_msg_id = data.get("manual_add_msg_id")
+    manual_user_id = data.get("manual_user_id")
+
+    # 1) удаляем запрос “введите имя профиля…”
+    if prev_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prev_msg_id)
+        except Exception:
+            pass
+
+    # 2) проверка отмены
+    if client_name == "❌" or client_name.lower() == "отмена":
+        await state.clear()
+        await delete_last_menus(message.from_user.id)
+        stats = get_server_info()
+        await show_menu(message.from_user.id, stats + "\n<b>Главное меню:</b>", create_main_menu())
+        return
+
+    # 3) проверяем, что имя подходит под шаблон [A-Za-z0-9_-]{1,32}
+    if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", client_name):
+        warn = await message.answer("❌ Некорректное имя профиля! Используйте латиницу, цифры, _ или -. Не больше 32 символов.", reply_markup=cancel_markup)
+        await asyncio.sleep(1.5)
+        try: await warn.delete()
+        except: pass
+        # повторно запросим
+        msg2 = await bot.send_message(
+            message.chat.id,
+            "✏️ Введите корректное имя профиля (латиница, цифры, _ или -):",
+            reply_markup=cancel_markup
+        )
+        await state.update_data(manual_add_msg_id=msg2.message_id)
+        return
+
+    # 4) Создаём сертификат через client.sh:
+    result = await execute_script("1", client_name, "30")
+    if result["returncode"] != 0:
+        # Если что-то пошло не так, сообщаем админу
+        await message.answer(f"❌ Ошибка при создании профиля <code>{client_name}</code>: {result['stderr']}", parse_mode="HTML")
+        await state.clear()
+        return
+
+    # 5) Сохраняем (ID ↔ profile_name) в SQLite
+    save_profile_name(manual_user_id, client_name)
+
+    # 6) Добавляем пользователя в approved_users.txt и users.txt
+    approve_user(manual_user_id)
+    save_user_id(manual_user_id)
+
+    # 7) Уведомляем пользователя, что он получил VPN (если он уже в чате — дойдёт немедленно; 
+    #    если он зайдёт позже, при /start будет определён как approved)
+    try:
+        await safe_send_message(
+            manual_user_id,
+            f"✅ Ваша учётная запись VPN <b>{client_name}</b> создана администратором!\n\n"
+            "Теперь вы можете писать боту и сразу получать конфиг.",
+            parse_mode="HTML",
+            reply_markup=create_user_menu(client_name, user_id=manual_user_id)
+        )
+    except Exception as e:
+        # Вполне нормально, если юзер ещё не писал боту (чата нет) — в этом случае safe_send_message просто проигнорирует отправку.
+        pass
+
+    # 8) Сообщаем админу об успешном создании и возвращаем в главное меню
+    await message.answer("✅ Клиент успешно создан и «уппрувлен»! Пользователь может зайти в бот и сразу получить конфиги.", reply_markup=ReplyKeyboardRemove())
+    stats = get_server_info()
+    await show_menu(message.from_user.id, stats + "\n<b>Главное меню:</b>", create_main_menu())
+
+    await state.clear()
+
 
 
 # ==== Список пользователей с эмодзи ====
