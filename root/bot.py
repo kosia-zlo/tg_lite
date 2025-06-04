@@ -3,21 +3,26 @@ logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
-
+import requests
 import os
 import re
 import sys
-import requests
 import asyncio
 import hashlib
+
+
+
 import glob
+
 import hashlib
 from aiogram import types
 from asyncio import sleep
 from aiogram.filters import StateFilter
+
 import sqlite3
 import uuid
 from aiogram.fsm.state import State, StatesGroup
+
 class SetEmoji(StatesGroup):
     waiting_for_emoji = State()
     
@@ -32,10 +37,6 @@ class RenameProfile(StatesGroup):
     waiting_for_new_name = State()
     waiting_for_rename_approve = State()  # Новое состояние для одобрения с новым именем
 
-from db import init_db, get_profile_name, save_profile_name
-
-DB_PATH = "vpn.db"
-init_db(DB_PATH)
 
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -45,6 +46,10 @@ import socket
 
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from db import init_db, get_profile_name, save_profile_name
+
+DB_PATH = "vpn.db"
+init_db(DB_PATH)
 
 cancel_markup = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton(text="❌ Отмена")]],
@@ -141,8 +146,7 @@ def set_last_menu_id(user_id, msg_id):
     with open(LAST_MENUS_FILE, "w") as f:
         json.dump(data, f)
 
-
-    
+   
 
 def add_pending(user_id, username, fullname):
     pending = {}
@@ -177,6 +181,7 @@ load_dotenv()
 FILEVPN_NAME = os.getenv("FILEVPN_NAME")
 if not FILEVPN_NAME:
     raise RuntimeError("FILEVPN_NAME не задан в .env")
+
 # Конфигурация
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
@@ -190,6 +195,16 @@ EMOJI_FILE = "user_emojis.json"
 LAST_MENUS_FILE = "last_menus.json"
 MAX_MENUS_PER_USER = 3  # или сколько надо, обычно 3-5
 
+# === Параметры 3x-UI для VLESS === 
+#Если хотите чтоб у вас появилась отдельная кнопка VLESS онлайн то раскомментируйте параметры (просто уберите знак"#". Предварительно должна быть установлена панель 3X-UI
+#BASE_URL    = "Замени свой адрес сюда/Путь к панели по типу Yy7jywStMXYLYzS"
+#LOGIN_PATH  = "/login"
+#ONLINES_PATH = "/panel/api/inbounds/onlines"
+#USERNAME = "ЛОГИН"
+#PASSWORD = "ПАРОЛЬ"
+
+# Сессия для хранения куки 3x-UI
+#session = requests.Session()
 
 ITEMS_PER_PAGE = 5
 AUTHORIZED_USERS = [ADMIN_ID]  # Список Telegram ID пользователей
@@ -227,10 +242,42 @@ class VPNSetup(StatesGroup):
 
 # Описание для вашего бота
 BOT_DESCRIPTION = """
-ТУТ ВАШ ТЕКСТ
+Вставь свое описание
+
+Как получить VPN?
+🪪 Жми /start, отправляй заявку, жди одобрения!
+
 """
 
-BOT_SHORT_DESCRIPTION = "ТУТ ВАШ ТЕКСТ"
+BOT_SHORT_DESCRIPTION = "Вставь свое описание"
+
+
+#Для VLESS онлайн убери ниже #, чтоб строка начиналась с def authenticate() -> bool:
+#def authenticate() -> bool:
+#    """
+#    Логинимся на 3x-UI, сохраняем куки в session.
+#    Возвращает True, если логин успешен, иначе False.
+#    """
+#    url = BASE_URL + LOGIN_PATH
+#    payload = {"username": USERNAME, "password": PASSWORD}
+#    try:
+#        resp = session.post(url, json=payload, timeout=10)
+#        resp.raise_for_status()
+#    except Exception as e:
+#        logging.error(f"[AUTH] Ошибка при запросе /login: {e}")
+#        return False
+#
+#    data = resp.json()
+#    if data.get("success"):
+#        logging.info("[AUTH] Успешный вход, куки сохранены.")
+#        return True
+#    else:
+#        logging.error(f"[AUTH] Не удалось залогиниться: {data}")
+#        return False
+
+
+
+
 
 
 def user_registered(user_id):
@@ -323,6 +370,20 @@ async def set_bot_commands():
 
         await bot.set_my_commands(commands)
 
+
+@dp.callback_query(lambda c: c.data != "send_request"
+                          and not is_approved_user(c.from_user.id)
+                          and not is_pending(c.from_user.id))
+async def _deny_unapproved_callback(callback: types.CallbackQuery):
+    await callback.answer(
+        "❌ У вас нет доступа. Чтобы получить VPN, сначала отправьте заявку через /start.",
+        show_alert=True
+    )
+
+
+
+
+
 @dp.callback_query(lambda c: c.data.startswith("approve_rename_"))
 async def process_application_rename(callback: types.CallbackQuery, state: FSMContext):
     user_id = int(callback.data.split("_", 2)[-1])
@@ -341,6 +402,33 @@ async def process_application_rename(callback: types.CallbackQuery, state: FSMCo
     await state.update_data(rename_prompt_id=msg.message_id)
     await callback.answer()
 
+def remove_user_id(user_id):
+    """Удаляет строку с данным user_id из файла users.txt."""
+    if not os.path.exists(USERS_FILE):
+        return
+    try:
+        with open(USERS_FILE, "r") as f:
+            lines = [line.strip() for line in f if line.strip().isdigit()]
+        updated = [line for line in lines if line != str(user_id)]
+        with open(USERS_FILE, "w") as f:
+            for uid in updated:
+                f.write(f"{uid}\n")
+    except Exception as e:
+        print(f"[remove_user_id] Не удалось обновить {USERS_FILE}: {e}")
+
+def remove_approved_user(user_id):
+    """Удаляет строку с данным user_id из файла approved_users.txt."""
+    if not os.path.exists(APPROVED_FILE):
+        return
+    try:
+        with open(APPROVED_FILE, "r") as f:
+            lines = [line.strip() for line in f]
+        updated = [line for line in lines if line != str(user_id)]
+        with open(APPROVED_FILE, "w") as f:
+            for uid in updated:
+                f.write(f"{uid}\n")
+    except Exception as e:
+        print(f"[remove_approved_user] Не удалось обновить {APPROVED_FILE}: {e}")
 
 
 @dp.message(RenameProfile.waiting_for_rename_approve)
@@ -436,7 +524,7 @@ async def update_bot_description():
         await bot.set_my_description(BOT_DESCRIPTION, language_code="ru")
 
 
-BOT_ABOUT = "ТУТ ВАШ ТЕКСТ"
+BOT_ABOUT = "Вставь свое описание"
 
 
 async def update_bot_about():
@@ -486,8 +574,177 @@ def create_main_menu():
         [InlineKeyboardButton(text="🛠 Управление сервером", callback_data="server_manage_menu")],
         [InlineKeyboardButton(text="📢 Объявление", callback_data="announce_menu")],
         [InlineKeyboardButton(text="🟢 Кто онлайн", callback_data="who_online")],
+#        [InlineKeyboardButton(text="🟢 Онлайн VLESS", callback_data="vless_online")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+#Для VLESS. Убери ## и выше тоже. Где поле ОНЛАЙН VLESS
+#@dp.callback_query(lambda c: c.data == "vless_online")
+#async def vless_online_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+
+    # 1) Проверяем куки и авторизацию
+    if "3x-ui" not in session.cookies.get_dict():
+        ok = authenticate()
+        if not ok:
+            await bot.send_message(
+                user_id,
+                "❗ Не удалось аутентифицироваться на 3x-UI. Проверьте логин/пароль или доступ."
+            )
+            await callback.answer()
+            return
+
+    # 2) Выполняем POST-запрос
+    try:
+        resp = session.post(BASE_URL + ONLINES_PATH,
+                            headers={"Content-Type": "application/json"}, timeout=10)
+    except Exception as e:
+        logging.error(f"[VLESS_ONLINE] Network error при запросе /onlines: {e}")
+        # Удалим текущее меню, покажем ошибку и вернем главную
+        try: await callback.message.delete()
+        except: pass
+        err_msg = await bot.send_message(
+            user_id,
+            "❗ Произошла сетевая ошибка при получении списка онлайн VLESS клиентов."
+        )
+        await asyncio.sleep(1)
+        try: await err_msg.delete()
+        except: pass
+        stats = get_server_info()
+        menu = await bot.send_message(
+            user_id,
+            stats + "\n<b>Главное меню:</b>",
+            reply_markup=create_main_menu(),
+            parse_mode="HTML"
+        )
+        set_last_menu_id(user_id, menu.message_id)
+        await callback.answer()
+        return
+
+    # 3) Проверяем HTTP-статус
+    if resp.status_code != 200:
+        logging.error(f"[VLESS_ONLINE] Некорректный статус {resp.status_code}, body={resp.text!r}")
+        try: await callback.message.delete()
+        except: pass
+        err_msg = await bot.send_message(
+            user_id,
+            f"❗ Сервер вернул статус {resp.status_code} вместо JSON."
+        )
+        await asyncio.sleep(1)
+        try: await err_msg.delete()
+        except: pass
+        stats = get_server_info()
+        menu = await bot.send_message(
+            user_id,
+            stats + "\n<b>Главное меню:</b>",
+            reply_markup=create_main_menu(),
+            parse_mode="HTML"
+        )
+        set_last_menu_id(user_id, menu.message_id)
+        await callback.answer()
+        return
+
+    # 4) Пробуем распарсить JSON, но оборачиваем в try/except
+    try:
+        data = resp.json()
+    except ValueError as e:
+        logging.error(f"[VLESS_ONLINE] Не JSON в ответе: {e}; content={resp.text!r}")
+        # Удаляем текущее меню
+        try: await callback.message.delete()
+        except: pass
+        info_msg = await bot.send_message(
+            user_id,
+            "ℹ️ Сервер вернул пустой или некорректный JSON для онлайн VLESS."
+        )
+        await asyncio.sleep(1)
+        try: await info_msg.delete()
+        except: pass
+        stats = get_server_info()
+        menu = await bot.send_message(
+            user_id,
+            stats + "\n<b>Главное меню:</b>",
+            reply_markup=create_main_menu(),
+            parse_mode="HTML"
+        )
+        set_last_menu_id(user_id, menu.message_id)
+        await callback.answer()
+        return
+
+    # 5) Если JSON разобран, проверяем success-флаг
+    if not isinstance(data, dict) or not data.get("success"):
+        try: await callback.message.delete()
+        except: pass
+        info_msg = await bot.send_message(
+            user_id,
+            "ℹ️ Сервер вернул success=false или неожиданный формат JSON."
+        )
+        await asyncio.sleep(1)
+        try: await info_msg.delete()
+        except: pass
+        stats = get_server_info()
+        menu = await bot.send_message(
+            user_id,
+            stats + "\n<b>Главное меню:</b>",
+            reply_markup=create_main_menu(),
+            parse_mode="HTML"
+        )
+        set_last_menu_id(user_id, menu.message_id)
+        await callback.answer()
+        return
+
+    # 6) Извлекаем список онлайн-клиентов
+    online_list = data.get("obj", [])
+    if not online_list:
+        try: await callback.message.delete()
+        except: pass
+        info_msg = await bot.send_message(
+            user_id,
+            "ℹ️ В данный момент нет активных (онлайн) VLESS клиентов."
+        )
+        await asyncio.sleep(1)
+        try: await info_msg.delete()
+        except: pass
+        stats = get_server_info()
+        menu = await bot.send_message(
+            user_id,
+            stats + "\n<b>Главное меню:</b>",
+            reply_markup=create_main_menu(),
+            parse_mode="HTML"
+        )
+        set_last_menu_id(user_id, menu.message_id)
+        await callback.answer()
+        return
+
+    # 7) Формируем текст со списком
+    text_lines = ["🟢 <b>Сейчас онлайн VLESS:</b>"]
+    for nickname in online_list:
+        safe_name = nickname.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        text_lines.append(f"– <code>{safe_name}</code>")
+    text = "\n".join(text_lines)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]
+    ])
+
+    try:
+        await callback.message.delete()
+    except:
+        pass
+
+    await bot.send_message(
+        user_id,
+        text,
+        parse_mode="HTML",
+        reply_markup=kb,
+        disable_web_page_preview=True
+    )
+    await callback.answer()
+
+
+
+
+
 
 
 @dp.callback_query(lambda c: c.data == "server_manage_menu")
@@ -673,30 +930,118 @@ def create_wg_menu(client_name):
         [
             InlineKeyboardButton(
                 text="Обычный VPN",
-                callback_data=f"download_wg_vpn_{client_name}"
+                callback_data=f"info_wg_vpn_{client_name}"
             ),
             InlineKeyboardButton(
                 text="Antizapret (Рекомендую)",
-                callback_data=f"download_wg_antizapret_{client_name}"
+                callback_data=f"info_wg_antizapret_{client_name}"
             )
         ],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_user_menu_{client_name}")]
     ])
+
+@dp.callback_query(lambda c: c.data.startswith("info_wg_vpn_"))
+async def show_info_wg_vpn(callback: types.CallbackQuery):
+    client_name = callback.data.replace("info_wg_vpn_", "")
+    text = (
+        "🛡 <b>Как подключиться к обычному VPN (WireGuard):</b>\n\n"
+        "📱 Поддерживаемые устройства:\n"
+        "• Android 📱\n"
+        "• iOS 📲\n"
+        "• Windows 💻\n"
+        "• macOS 🍏\n"
+        "• Linux 🐧\n\n"
+        "📖 <b>Инструкция по установке:</b>\n"
+        "👉 <a href='https://www.google.com/'>ГУГЛ</a>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Скачать конфиг", callback_data=f"download_wg_vpn_{client_name}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"get_wg_{client_name}")]
+
+    ])
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("info_wg_antizapret_"))
+async def show_info_wg_antizapret(callback: types.CallbackQuery):
+    client_name = callback.data.replace("info_wg_antizapret_", "")
+    text = (
+        "🛡 <b>WireGuard + Antizapret:</b>\n\n"
+        "📱 Поддерживаемые устройства:\n"
+        "• Android 📱\n"
+        "• iOS 📲\n"
+        "• Windows 💻\n"
+        "• macOS 🍏\n"
+        "• Linux 🐧\n\n"
+        "🚫 Использует DNS и маршруты обхода блокировок.\n\n"
+        "📖 <b>Инструкция по установке:</b>\n"
+        "👉 <a href='https://www.google.com/'>ГУГЛ</a>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Скачать конфиг", callback_data=f"download_wg_antizapret_{client_name}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"get_wg_{client_name}")]
+    ])
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
 
 def create_amnezia_menu(client_name):
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
                 text="Обычный VPN",
-                callback_data=f"download_am_vpn_{client_name}"
+                callback_data=f"info_am_vpn_{client_name}"
             ),
             InlineKeyboardButton(
                 text="Antizapret (Рекомендую)",
-                callback_data=f"download_am_antizapret_{client_name}"
+                callback_data=f"info_am_antizapret_{client_name}"
             )
         ],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_user_menu_{client_name}")]
     ])
+
+@dp.callback_query(lambda c: c.data.startswith("info_am_vpn_"))
+async def show_info_am_vpn(callback: types.CallbackQuery):
+    client_name = callback.data.replace("info_am_vpn_", "")
+    text = (
+        "🌀 <b>Amnezia VPN:</b>\n\n"
+        "📱 Поддерживаемые устройства:\n"
+        "• Android 📱\n"
+        "• Windows 💻\n"
+        "• macOS 🍏\n\n"
+        "🧾 Простой запуск через приложение Amnezia.\n\n"
+        "📖 <b>Инструкция по установке:</b>\n"
+        "👉 <a href='https://www.google.com/'>ГУГЛ</a>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Скачать конфиг", callback_data=f"download_am_vpn_{client_name}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"get_amnezia_{client_name}")]
+    ])
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("info_am_antizapret_"))
+async def show_info_am_antizapret(callback: types.CallbackQuery):
+    client_name = callback.data.replace("info_am_antizapret_", "")
+    text = (
+        "🌀 <b>Amnezia VPN + Antizapret:</b>\n\n"
+        "📱 Поддерживаемые устройства:\n"
+        "• Android 📱\n"
+        "• Windows 💻\n"
+        "• macOS 🍏\n\n"
+        "🚫 Использует обход блокировок через Antizapret.\n\n"
+        "📖 <b>Инструкция по установке:</b>\n"
+        "👉 <a href='https://www.google.com/'>ГУГЛ</a>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Скачать конфиг", callback_data=f"download_am_antizapret_{client_name}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"get_amnezia_{client_name}")]
+    ])
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+
+
 
 @dp.callback_query(lambda c: c.data.startswith("get_wg_"))
 async def get_wg_menu(callback: types.CallbackQuery):
@@ -1158,29 +1503,46 @@ async def ask_delete_user(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data.startswith("confirm_del_"))
 async def confirm_delete_user(callback: types.CallbackQuery):
     client_name = callback.data.split("_", 2)[-1]
-    user_id = callback.from_user.id
+    admin_id = callback.from_user.id
 
+    # 1) Узнаём user_id по имени клиента
+    target_user_id = get_user_id_by_name(client_name)
+
+    # 2) Выполняем удаление сертификата
     result = await execute_script("2", client_name)
-    stats = get_server_info()
-    # 1. Удаляем само сообщение с подтверждением
+
+    # 3) Убираем сообщение с подтверждением
     try:
         await callback.message.delete()
     except Exception:
         pass
 
-    # 2. Отправляем новое главное меню (одно)
+    # 4) Если скрипт удалил клиента без ошибок, чистим файлы с ID
     if result["returncode"] == 0:
+        if target_user_id is not None:
+            remove_approved_user(target_user_id)
+            remove_user_id(target_user_id)
+            # Опционально: удаляем профиль из БД
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("DELETE FROM users WHERE id=?", (target_user_id,))
+            conn.commit()
+            conn.close()
+
+        stats = get_server_info()
         await show_menu(
-            user_id,
+            admin_id,
             f"✅ Пользователь <b>{client_name}</b> удалён.\n\n{stats}\n<b>Главное меню:</b>",
             create_main_menu()
         )
     else:
+        stats = get_server_info()
         await show_menu(
-            user_id,
+            admin_id,
             f"❌ Ошибка удаления: {result['stderr']}\n\n{stats}\n<b>Главное меню:</b>",
             create_main_menu()
         )
+
     await callback.answer()
 
 
@@ -1633,10 +1995,10 @@ def create_user_menu(client_name, back_callback=None, is_admin=False, user_id=No
         [InlineKeyboardButton(text="📥 Получить конфиг OpenVPN", callback_data=f"select_openvpn_{client_name}")],
         [InlineKeyboardButton(text="🌐 Получить WireGuard", callback_data=f"get_wg_{client_name}")],
         [InlineKeyboardButton(text="🦄 Получить Amnezia", callback_data=f"get_amnezia_{client_name}")],
-        [InlineKeyboardButton(text="📬 Получить VLESS", callback_data=f"get_vless_{client_name}")],
-        [InlineKeyboardButton(text="✏️ Изменить имя профиля", callback_data=f"rename_profile_{client_name}")]
+        [InlineKeyboardButton(text="📬 Получить VLESS", callback_data=f"get_vless_{client_name}")]
     ]
     if is_admin:
+        keyboard.append([InlineKeyboardButton(text="✏️ Изменить имя профиля", callback_data=f"rename_profile_{client_name}")])        
         keyboard.append([InlineKeyboardButton(text="🤡 Установить смайл", callback_data=f"set_emoji_{client_name}")])
         keyboard.append([InlineKeyboardButton(text="✏️ Установить срок действия", callback_data=f"renew_user_{client_name}")])
         keyboard.append([InlineKeyboardButton(text="❌ Удалить пользователя", callback_data=f"delete_user_{client_name}")])
@@ -1644,7 +2006,7 @@ def create_user_menu(client_name, back_callback=None, is_admin=False, user_id=No
             keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)])
     else:
         keyboard.append([InlineKeyboardButton(text="💬 Связь с поддержкой", url="https://www.google.com/")])
-        keyboard.append([InlineKeyboardButton(text="ℹ️ Как пользоваться", url="=https://www.google.com/")])
+        keyboard.append([InlineKeyboardButton(text="ℹ️ Как пользоваться", url="https://www.google.com/")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -1858,48 +2220,118 @@ def get_online_users_from_log():
         "/etc/openvpn/server/logs/vpn-tcp-status.log",
         "/etc/openvpn/server/logs/vpn-udp-status.log",
     ]
-    users = set()
+    users = {}  # client_name -> "OpenVPN"
     for log_path in log_files:
-        print(f"Читаю лог: {log_path}")  # Для отладки
+        proto = "OpenVPN"  # и antizapret, и vpn – это OpenVPN
         try:
             if os.path.exists(log_path):
                 with open(log_path) as f:
                     for line in f:
-                        print(line.strip())  # Для отладки
                         if line.startswith("CLIENT_LIST"):
                             parts = line.strip().split(",")
                             if len(parts) > 1:
-                                users.add(parts[1])
+                                name = parts[1]
+                                if name not in users:
+                                    users[name] = proto
         except Exception as e:
             print(f"Ошибка чтения лога {log_path}: {e}")
-    print(f"Обнаружены пользователи: {users}")  # Для отладки
-    return sorted(users)
+    return users  # вернёт {client_name: "OpenVPN"}
 
-#Кто онлайн
+def get_online_wg_peers():
+    """
+    Получаем список соединённых WG-peer’ов (и Amnezia, и обычный WG).
+    Различаем по месту хранения конфига: 
+      - если pubkey найден в /root/antizapret/client/amneziawg → "Amnezia"
+      - иначе, если найден в /root/antizapret/client/wireguard → "WG"
+    """
+    peers = {}
+    try:
+        result = subprocess.run(
+            ["wg", "show", "all", "latest-handshakes"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True
+        )
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) != 2:
+                continue
+            pubkey, ts = parts
+            if ts == "0":
+                continue  # нет активного handshakes
+            # Поиск в Amnezia (amneziawg)
+            found = False
+            for root_dir, proto_label in [
+                ("/root/antizapret/client/amneziawg", "Amnezia"),
+                ("/root/antizapret/client/wireguard", "WG")
+            ]:
+                for root, _, files in os.walk(root_dir):
+                    for fname in files:
+                        fpath = os.path.join(root, fname)
+                        try:
+                            with open(fpath, encoding="utf-8", errors="ignore") as cf:
+                                if pubkey in cf.read():
+                                    # Имя клиента — часть имени файла после последнего тире
+                                    client_name = fname.rsplit("-", 1)[-1].rsplit(".", 1)[0]
+                                    if client_name not in peers:
+                                        peers[client_name] = proto_label
+                                    found = True
+                                    break
+                        except:
+                            continue
+                    if found:
+                        break
+                if found:
+                    break
+    except Exception as e:
+        print(f"Ошибка при проверке WG: {e}")
+    return peers  # вернёт {client_name: "WG" или "Amnezia"}
+
 @dp.callback_query(lambda c: c.data == "who_online")
 async def who_online(callback: types.CallbackQuery):
-    online = get_online_users_from_log()
-    if online:
-        try:
-            await callback.message.delete()
-        except:
-            pass
+    user_id = callback.from_user.id
 
-        keyboard = types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [types.InlineKeyboardButton(text=f"• {u}", callback_data=f"manage_online_{u}")]
-                for u in online
-            ] + [[types.InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]]
-        )
-        msg = "🟢 <b>Кто в сети:</b>\n\nНажми на клиента для управления:"
-        await bot.send_message(callback.from_user.id, msg, reply_markup=keyboard, parse_mode="HTML")
-    else:
+    # Получаем OpenVPN и WG/Amnezia
+    openvpn_map = get_online_users_from_log()  # {client_name: "OpenVPN"}
+    wg_map      = get_online_wg_peers()       # {client_name: "WG" или "Amnezia"}
+
+    # Объединяем OpenVPN и WG-клиентов
+    merged = dict(openvpn_map)
+    for client, proto in wg_map.items():
+        if client not in merged:
+            merged[client] = proto
+
+    if not merged:
         try:
             await callback.message.delete()
         except:
             pass
-        await bot.send_message(callback.from_user.id, "❌ Сейчас нет никого онлайн", reply_markup=create_main_menu())
+        await bot.send_message(user_id, "❌ Сейчас нет никого онлайн", reply_markup=create_main_menu())
+        await callback.answer()
+        return
+
+    try:
+        await callback.message.delete()
+    except:
+        pass
+
+    buttons = []
+    text_lines = ["🟢 <b>Кто в сети:</b>"]
+
+    for client in merged.keys():
+        buttons.append([
+            InlineKeyboardButton(text=client, callback_data=f"manage_online_{client}")
+        ])
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
+
+    text = "\n".join(text_lines)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await bot.send_message(user_id, text, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
+
+
 
 
 
@@ -1909,11 +2341,11 @@ async def manage_online_user(callback: types.CallbackQuery):
     client_name = callback.data[len("manage_online_"):]
     user_id = callback.from_user.id
 
-    # Удаляем все старые меню
+    # Удаляем старые меню
     await delete_last_menus(user_id)
     try:
         await callback.message.delete()
-    except Exception:
+    except:
         pass
 
     # Везде используем единый create_user_menu, но с back_callback="who_online"
@@ -1923,6 +2355,7 @@ async def manage_online_user(callback: types.CallbackQuery):
         create_user_menu(client_name, back_callback="who_online", is_admin=(user_id == ADMIN_ID))
     )
     await callback.answer()
+
 
 
 
@@ -2074,76 +2507,66 @@ async def send_vless_link(callback: types.CallbackQuery):
     client_name = callback.data.split("_", 2)[-1]
     user_id = callback.from_user.id
 
-    # Удаляем всё предыдущие меню
+    # 1) Удаляем предыдущее меню, чтобы не было «зависших» кнопок
     await delete_last_menus(user_id)
     try:
         await callback.message.delete()
     except Exception:
         pass
 
-    vless_link = (
-        "ТУТ ВАША VLESS в кавычках главное чтоб была ссылка на VLESS"
-    )
+    # 2) Готовим путь к файлу с конфигом для данного client_name
+    vless_file_path = f"/root/vless-configs/{client_name}.txt"
 
-    # Текст инструкции с «крупными» заголовками и смайлами
-    text = (
-        f"🔐 <b>Ссылка для подключения VLESS:</b>\n\n"
-        f"<code>{vless_link}</code>\n\n"
-        f"<b>📱 🤖 ANDROID:</b>\n"
-        f"• <a href=\"https://play.google.com/store/apps/details?id=com.v2ray.ang\">v2rayNG</a>  \n"
-        f"  • Установка из Google Play → Открыть → «+» → «Вставить URL» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
-        f"• <a href=\"https://github.com/NeKoStudio/NeKoBox/releases\">NekoBox</a>  \n"
-        f"  • Скачайте APK с GitHub Releases → Установите → Запустите → «Добавить» → «URL-профиль» → Вставить ссылку → Сохранить → «▶».  \n\n"
-        f"• <a href=\"https://github.com/yanue/v2ray-tun/releases\">v2RayTun</a>  \n"
-        f"  • Скачайте APK с GitHub Releases → Установите → «Конфигурации» → «Добавить» → «Из буфера» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
-        f"<b>📱 🍎 iOS:</b>\n"
-        f"• <a href=\"https://apps.apple.com/app/streisand/id1480384826\">Streisand</a>  \n"
-        f"  • Установка из App Store → Открыть → «Конфигурации» → «Добавить профиль по ссылке» → Вставить ссылку → Сохранить → «Connect».  \n\n"
-        f"• <a href=\"https://apps.apple.com/app/foxray-pro-v2ray-vpn/id1524976027\">FoXray</a>  \n"
-        f"  • App Store → Установить → «+» → «Вставить URL» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
-        f"• <a href=\"https://apps.apple.com/app/shadowrocket/id932747118\">Shadowrocket</a>  \n"
-        f"  • App Store (платно) → «Профили» → «+» → «Добавить вручную» → «URL» → Вставить ссылку → Сохранить → Включить.  \n\n"
-        f"• <a href=\"https://apps.apple.com/app/v2box-v2ray-client/id1509268488\">V2Box – V2ray Client</a>  \n"
-        f"  • App Store → «Профиль» → «Добавить» → «Добавить из URL» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
-        f"• <a href=\"https://apps.apple.com/app/v2raytun-app/id1601032123\">v2RayTun</a>  \n"
-        f"  • App Store → Установить → «Конфигурации» → «Импортировать URL» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
-        f"<b>💻 🪟 WINDOWS:</b>\n"
-        f"• <a href=\"https://github.com/V2rayXS/Furious/releases\">Furious</a>  \n"
-        f"  • Скачайте .exe с GitHub Releases → Установите → «Profiles» → «Import URL» → Вставить ссылку → Сохранить → «Connect».  \n\n"
-        f"• <a href=\"https://github.com/AloneGuid/InvisibleMan-XRayClient/releases\">InvisibleMan-XRayClient</a>  \n"
-        f"  • Скачайте .zip → Распакуйте → Запустите .exe → «+» → «Import from URL» → Вставить ссылку → Сохранить → «▶».  \n\n"
-        f"• <a href=\"https://github.com/Nekoray/Nekoray/releases\">Nekoray</a>  \n"
-        f"  • Скачайте portable-версию .zip → Распакуйте → Запустите Nekoray.exe → «Profiles» → «Import URL» → Вставить ссылку → Сохранить → «Start».  \n\n"
-        f"<b>💻 🍏 macOS:</b>\n"
-        f"• <a href=\"https://apps.apple.com/app/v2box-v2ray-client/id1509268488\">V2Box – V2ray Client</a>  \n"
-        f"  • App Store → Установить → «Профили» → «+» → «Добавить URL» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
-        f"• <a href=\"https://apps.apple.com/app/foxray-pro-v2ray-vpn/id1524976027\">FoXray</a>  \n"
-        f"  • Как на iOS: App Store → «+» → «Вставить URL» → Вставить ссылку → Сохранить → «Подключить».  \n\n"
-        f"• <a href=\"https://apps.apple.com/app/streisand/id1480384826\">Streisand</a>  \n"
-        f"  • App Store → «Добавить конфигурацию по URL» → Вставить ссылку → Сохранить → «Connect».  \n\n"
-        f"• <a href=\"https://apps.apple.com/app/v2rayxs/id1522326938\">V2RayXS</a>  \n"
-        f"  • App Store → Установить → «Import» → «From URL» → Вставить ссылку → Сохранить → «Start».  \n\n"
-        f"• <a href=\"https://github.com/NeKoray/NekoRay/releases\">NekoRay/NekoBox for macOS</a>  \n"
-        f"  • Скачайте .dmg с GitHub Releases → Установите → Откройте → «+» → «Import URL» → Вставить ссылку → Сохранить → «Start».  \n\n"
-        f"• <a href=\"https://github.com/V2rayXS/Furious/releases\">Furious</a>  \n"
-        f"  • Скачайте .dmg → Установите → Запустите Furious.app → «Profiles» → «Import URL» → Вставить ссылку → «Connect».  \n"
-    )
+    if os.path.exists(vless_file_path):
+        # 3) Читаем готовую ссылку из файла
+        try:
+            with open(vless_file_path, "r", encoding="utf-8") as f:
+                vless_link = f.read().strip()
+        except Exception as e:
+            # Если вдруг не удалось прочитать файл, выдаём ошибку
+            await bot.send_message(user_id, f"❌ Не удалось прочитать конфиг VLESS: {e}")
+            await callback.answer()
+            return
 
-    # Кнопка «⬅️ Назад» для возврата в меню управления данного пользователя
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_user_menu_{client_name}")]
-        ]
-    )
+        # 4) Формируем итоговый текст, вставляя ссылку
+        text = (
+            "<b>📖 Инструкция по установке VLESS:</b>\n"
+            "👉 <a href=\"https://www.google.com/\">ГУГЛ</a>\n\n"
+            "🔐 <b>Ваша персональная ссылка для подключения:</b>\n"
+            f"<code>{vless_link}</code>\n\n"
+            "📱 <b>Android</b>: v2rayNG, NekoBox, v2RayTun\n"
+            "🍎 <b>iOS</b>: Streisand, FoXray, V2Box, Shadowrocket\n"
+            "💻 <b>Windows</b>: Furious, InvisibleMan, Nekoray\n"
+            "🍏 <b>macOS</b>: V2Box, FoXray, Nekoray, V2RayXS\n\n"
+            "Скопируйте свою ссылку и вставьте в приложение — подключение займет пару секунд."
+        )
 
-    await bot.send_message(
-        user_id,
-        text,
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-        reply_markup=keyboard
-    )
-    await callback.answer()
+        # 5) Кнопка «Назад» возвращает в меню управления этим клиентом
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[[
+                InlineKeyboardButton(text="⬅️ Назад",
+                                     callback_data=f"back_to_user_menu_{client_name}")
+            ]]
+        )
+
+        await bot.send_message(
+            user_id,
+            text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=keyboard
+        )
+        await callback.answer()
+
+    else:
+        # Если для этого client_name нет файла — сообщаем об ошибке
+        await bot.send_message(
+            user_id,
+            f"❌ Конфигурация VLESS для <b>{client_name}</b> не найдена.\n"
+            "Обратитесь к администратору.",
+            parse_mode="HTML"
+        )
+        await callback.answer()
 
 
 
@@ -2506,26 +2929,31 @@ async def cleanup_openvpn_files(client_name: str):
 
 @dp.callback_query(lambda c: c.data.startswith("select_openvpn_"))
 async def select_openvpn_config(callback: types.CallbackQuery):
-    client_name = callback.data.split("_")[-1]
-
+    client_name = callback.data.replace("select_openvpn_", "")
+    
+    text = (
+        "🔐 <b>OpenVPN — выбор конфигурации:</b>\n\n"
+        "📱 Поддерживаемые устройства:\n"
+        "• Android 🤖\n"
+        "• iOS 🍎\n"
+        "• Windows 💻\n"
+        "• macOS 🍏\n"
+        "• Linux 🐧\n\n"
+        "📖 <b>Инструкция по установке:</b>\n"
+        "👉 <a href=\"https://www.google.com/\">ГУГЛ</a>"
+    )
+    
     markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Обычный VPN", callback_data=f"download_openvpn_vpn_{client_name}")],
-        [InlineKeyboardButton(text="Antizapret (Рекомендуется)", callback_data=f"download_openvpn_antizapret_{client_name}")],
+        [InlineKeyboardButton(text="✅ Обычный VPN", callback_data=f"download_openvpn_vpn_{client_name}")],
+        [InlineKeyboardButton(text="✅ Antizapret (Рекомендуется)", callback_data=f"download_openvpn_antizapret_{client_name}")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_user_menu_{client_name}")]
     ])
-
-    # Удаляем предыдущие меню
+    
     await delete_last_menus(callback.from_user.id)
     try:
         await callback.message.delete()
     except Exception:
         pass
-
-    # Добавляем ссылку на инструкцию перед кнопками
-    text = (
-        "Выберите тип конфигурации OpenVPN:\n\n"
-        "📖 <a href=\"https://www.google.com/\">Инструкция по подключению для 🍎Apple, 🤖Android и 🖥PC</a>"
-    )
 
     await bot.send_message(
         callback.from_user.id,
@@ -2535,6 +2963,7 @@ async def select_openvpn_config(callback: types.CallbackQuery):
         reply_markup=markup
     )
     await callback.answer()
+
 
 
 
@@ -2980,25 +3409,52 @@ async def process_application(callback: types.CallbackQuery, state: FSMContext):
             save_profile_name(user_id, client_name)
             approve_user(user_id)
             remove_pending(user_id)
-            save_user_id(user_id)  # <--- ДОБАВИТЬ В users.txt сразу!
+            save_user_id(user_id)
+
+            # 1) удаляем сообщение с заявкой у админа
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+
+            # 2) уведомляем пользователя
             await safe_send_message(
                 user_id,
-                f"✅ Ваша заявка одобрена!\nИмя профиля: <b>{client_name}</b>\nТеперь вам доступны функции VPN.",
+                f"✅ Ваша заявка одобрена!\n"
+                f"Имя профиля: <b>{client_name}</b>\nТеперь вам доступны функции VPN.",
                 parse_mode="HTML",
                 reply_markup=create_user_menu(client_name)
             )
+
+            # 3) показываем админу главное меню
             stats = get_server_info()
-            await show_menu(callback.from_user.id, stats + "\n<b>Главное меню:</b>", create_main_menu())
+            await show_menu(
+                callback.from_user.id,
+                stats + "\n<b>Главное меню:</b>",
+                create_main_menu()
+            )
         else:
             await callback.message.edit_text(f"❌ Ошибка: {result['stderr']}")
         await callback.answer()
         return
 
-    else:  # Отклонить
+    # ───── обработка «Отклонить» ─────
+    else:  # action == "reject"
         remove_pending(user_id)
+
+        # тоже удаляем сообщение с заявкой
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+
+        # уведомляем пользователя об отклонении
         await safe_send_message(user_id, "❌ Ваша заявка отклонена. Обратитесь к администратору.")
-        await callback.message.edit_text("❌ Заявка отклонена.")
+
+        # (не обязательно) можно показать админу краткий текст вместо меню
+        # await callback.message.edit_text("❌ Заявка отклонена.")
         await callback.answer()
+
 
 
 # ==== Старт бота ====
