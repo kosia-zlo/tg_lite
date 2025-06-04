@@ -23,7 +23,11 @@
 bash <(wget --no-hsts -qO- https://raw.githubusercontent.com/VATAKATru61/TG-Bot-OpenVPN-Antizapret/main/install.sh)
 ```
 
-
+- Для VLESS ONLINE. Раскоментируйте все строки
+- Для обычных конфигов VLESS. Создайте папку vless-configs и в ней конфиги в .txt файле. Имена файлов, такое же как у клиентов
+```
+    vless_file_path = f"/root/vless-configs/{client_name}.txt"
+```
 Команды:
 Запуск бота
 ```
