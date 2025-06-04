@@ -1,18 +1,18 @@
 #!/bin/bash
 #
 # Установочный скрипт для VPN-бота (TG-Bot-OpenVPN-Antizapret)
-# Версия: 2.2 — копирует antizapret в /root/antizapret, etc/openvpn в /etc/openvpn, root → /root; проверяет venv
+# Версия: 2.3 — принудительно пересоздаёт /root/venv, чтобы избежать ошибок
 #
 # Что делает этот скрипт:
 # 1) Проверяет и при необходимости устанавливает git, wget, curl, python3-venv, python3-pip
 # 2) Спрашивает BOT_TOKEN, ADMIN_ID и FILEVPN_NAME, сохраняет их в /root/.env
 # 3) Клонирует репозиторий во временную папку /tmp/antizapret-install и сбрасывает локальные правки
-# 4) Копирует папки из временного клона:
+# 4) Копирует подпапки из временного клона:
 #      • antizapret → /root/antizapret
 #      • etc/openvpn → /etc/openvpn
 #      • root       → /root
 # 5) Во всех скопированных файлах заменяет "${FILEVPN_NAME}" на введённое имя (кроме install.sh)
-# 6) Создаёт (или восстанавливает) виртуальное окружение /root/venv и устанавливает зависимости из /root/requirements.txt
+# 6) Принудительно пересоздаёт виртуальное окружение /root/venv и устанавливает зависимости из /root/requirements.txt
 # 7) Дает /root/client.sh права на исполнение (если он существует)
 # 8) Создаёт systemd-юнит vpnbot.service, включает автозапуск и запускает службу
 # 9) Выводит инструкции по управлению ботом
@@ -26,7 +26,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "=============================================="
-echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.2"
+echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.3"
 echo "=============================================="
 echo
 
@@ -156,6 +156,7 @@ for DIR in "${TARGET_DIRS[@]}"; do
   if [ -d "$DIR" ]; then
     FILES=$(grep -RIl '\${FILEVPN_NAME}' "$DIR" || true)
     for f in $FILES; do
+      # Исключаем install.sh в /root, если он там оказался
       if [[ "$(basename "$f")" == "install.sh" ]]; then
         continue
       fi
@@ -167,24 +168,18 @@ done
 
 echo
 
-### 7) Создание (или восстановление) виртуального окружения и установка зависимостей
-echo "=== Шаг 7: Установка виртуального окружения и зависимостей ==="
+### 7) Принудительное пересоздание виртуального окружения и установка зависимостей
+echo "=== Шаг 7: (ПРИНУДИТЕЛЬНО) создание виртуального окружения и установка зависимостей ==="
 VENV_DIR="/root/venv"
 
-# Если есть папка venv без bin/activate, удаляем её
-if [ -d "$VENV_DIR" ] && [ ! -f "$VENV_DIR/bin/activate" ]; then
-  echo "  ⚠️  Директория $VENV_DIR найдена, но bin/activate отсутствует."
-  echo "     Удаляем некорректное окружение и создаём заново."
+# Если папка venv существует, удаляем её целиком
+if [ -d "$VENV_DIR" ]; then
+  echo "  Удаляем существующее виртуальное окружение: rm -rf $VENV_DIR"
   rm -rf "$VENV_DIR"
 fi
 
-# Если venv отсутствует, создаём
-if [ ! -d "$VENV_DIR" ]; then
-  echo "  Создаём виртуальное окружение: python3 -m venv $VENV_DIR"
-  python3 -m venv "$VENV_DIR"
-else
-  echo "  Виртуальное окружение $VENV_DIR уже существует и корректно — пропускаем создание."
-fi
+echo "  Создаем виртуальное окружение: python3 -m venv $VENV_DIR"
+python3 -m venv "$VENV_DIR"
 
 echo "  Активируем venv и устанавливаем зависимости из /root/requirements.txt"
 source "$VENV_DIR/bin/activate"
@@ -204,7 +199,7 @@ if [ -f "/root/client.sh" ]; then
   chmod +x /root/client.sh
   echo "  /root/client.sh отмечен как исполняемый."
 else
-  echo "  ⚠️  /root/client.sh не найден — пропустили."
+  echo "  ⚠️  /root/client.sh не найден — пропуск."
 fi
 
 echo
@@ -233,7 +228,7 @@ EOF
 echo "  Юнит записан: /etc/systemd/system/vpnbot.service"
 echo
 
-### 10) Перезагрузка daemon, автозапуск, старт службы
+### 10) Перезагрузка systemd, автозапуск, запуск службы
 echo "=== Шаг 10: Перезагрузка systemd, включение автозапуска и запуск vpnbot.service ==="
 systemctl daemon-reload
 systemctl enable vpnbot.service
