@@ -1,19 +1,18 @@
 #!/bin/bash
 #
 # Установочный скрипт для VPN-бота (TG-Bot-OpenVPN-Antizapret)
-# Версия: 2.5.3 — надёжная замена плейсхолдера с учётом пробелов
-# и даёт всем скопированным файлам права 777
+# Версия: 2.6 — пропускаем /root/antizapret/client/openvpn/vpn/ при замене плейсхолдера
+# и даём всем скопированным файлам права 777
 #
 # Что делает этот скрипт:
-# 1) Проверяет и при необходимости устанавливает git, wget, curl, python3-venv, python3-pip
-# 2) Спрашивает BOT_TOKEN, ADMIN_ID и FILEVPN_NAME, сохраняет их в /root/.env
+# 1) Проверяет и, при необходимости, устанавливает git, wget, curl, python3-venv, python3-pip
+# 2) Спрашивает BOT_TOKEN, ADMIN_ID и FILEVPN_NAME, записывает их в /root/.env
 # 3) Клонирует репозиторий во временную папку /tmp/antizapret-install и сбрасывает локальные правки
 # 4) Копирует подпапки из временного клона:
-#      • содержимое antizapret/ → /root/antizapret/
-#      • содержимое etc/openvpn/ → /etc/openvpn/
-#      • содержимое root/ → /root/
-#    (перезаписывает только файлы из репо, остальные остаются)
-# 5) Во всех скопированных файлах заменяет "${FILEVPN_NAME}" и "$FILEVPN_NAME" на введённое имя
+#      • antizapret/ → /root/antizapret/     (перезапись только файлов из репо)
+#      • etc/openvpn/ → /etc/openvpn/       (перезапись только файлов из репо)
+#      • root/ → /root/                     (перезапись только файлов из репо)
+# 5) Во всех скопированных файлах (кроме client/openvpn/vpn/*) заменяет "${FILEVPN_NAME}" и "$FILEVPN_NAME" на введённое имя
 # 6) Принудительно пересоздаёт виртуальное окружение /root/venv и устанавливает зависимости из /root/requirements.txt
 # 7) Даёт всем скопированным файлам права 777
 # 8) Создаёт systemd-юнит vpnbot.service, включает автозапуск и запускает службу
@@ -28,7 +27,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "=============================================="
-echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.5.3"
+echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.6"
 echo "=============================================="
 echo
 
@@ -149,20 +148,24 @@ echo "Копирование завершено."
 echo
 
 ### 6) Замена плейсхолдера "${FILEVPN_NAME}" и "$FILEVPN_NAME"
+// пропускаем любые пути вида */client/openvpn/vpn/*
 echo "=== Шаг 6: Ищем и заменяем literal \"\${FILEVPN_NAME}\" и \"\$FILEVPN_NAME\" → \"$FILEVPN_NAME\" ==="
 
 TARGET_DIRS=("/root/antizapret" "/etc/openvpn" "/root")
+EXCLUDE_SUBPATH="client/openvpn/vpn"
 
 for DIR in "${TARGET_DIRS[@]}"; do
   if [ -d "$DIR" ]; then
-    # Сначала заменяем "${FILEVPN_NAME}"
-    grep -RIl --exclude="install.sh" '\${FILEVPN_NAME}' "$DIR" 2>/dev/null | while IFS= read -r f; do
+    # 6.1) заменить ${FILEVPN_NAME}
+    grep -RIl --exclude-dir="$EXCLUDE_SUBPATH" '\${FILEVPN_NAME}' "$DIR" 2>/dev/null | \
+    while IFS= read -r f; do
       sed -i "s|\${FILEVPN_NAME}|${FILEVPN_NAME}|g" "$f"
       echo "  Заменено \${FILEVPN_NAME} в: $f"
     done
 
-    # Затем заменяем "$FILEVPN_NAME"
-    grep -RIl --exclude="install.sh" '\$FILEVPN_NAME' "$DIR" 2>/dev/null | while IFS= read -r f; do
+    # 6.2) заменить $FILEVPN_NAME
+    grep -RIl --exclude-dir="$EXCLUDE_SUBPATH" '\$FILEVPN_NAME' "$DIR" 2>/dev/null | \
+    while IFS= read -r f; do
       sed -i "s|\$FILEVPN_NAME|${FILEVPN_NAME}|g" "$f"
       echo "  Заменено \$FILEVPN_NAME в: $f"
     done
@@ -197,17 +200,19 @@ echo
 
 ### 8) Даем всем скопированным файлам права 777
 echo "=== Шаг 8: Даем полные права (777) всем скопированным файлам ==="
-
+# /root/antizapret
 if [ -d "/root/antizapret" ]; then
   chmod -R 777 "/root/antizapret"
   echo "  Права 777 выставлены на /root/antizapret"
 fi
 
+# /etc/openvpn
 if [ -d "/etc/openvpn" ]; then
   chmod -R 777 "/etc/openvpn"
   echo "  Права 777 выставлены на /etc/openvpn"
 fi
 
+# файлы из SRC_ROOT
 if [ -d "$SRC_ROOT" ]; then
   find "$SRC_ROOT" -type f | while IFS= read -r srcf; do
     rel="${srcf#$SRC_ROOT/}"
@@ -249,7 +254,7 @@ echo
 echo "=== Шаг 10: Перезагрузка systemd и запуск vpnbot.service ==="
 systemctl daemon-reload
 systemctl enable vpnbot.service
-systemctl.restart vpnbot.service
+systemctl restart vpnbot.service
 
 echo
 
