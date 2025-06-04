@@ -1,18 +1,20 @@
 #!/bin/bash
 #
 # Установочный скрипт для VPN-бота (TG-Bot-OpenVPN-Antizapret)
-# Версия: 2.6 — пропускаем /root/antizapret/client/openvpn/vpn/ при замене плейсхолдера
-# и даём всем скопированным файлам права 777
+# Версия: 2.6.1 — более точная замена, не трогаем остальные файлы в /root, и даём всем скопированным файлам права 777
 #
 # Что делает этот скрипт:
-# 1) Проверяет и, при необходимости, устанавливает git, wget, curl, python3-venv, python3-pip
+# 1) Проверяет и при необходимости устанавливает git, wget, curl, python3-venv, python3-pip
 # 2) Спрашивает BOT_TOKEN, ADMIN_ID и FILEVPN_NAME, записывает их в /root/.env
 # 3) Клонирует репозиторий во временную папку /tmp/antizapret-install и сбрасывает локальные правки
 # 4) Копирует подпапки из временного клона:
 #      • antizapret/ → /root/antizapret/     (перезапись только файлов из репо)
 #      • etc/openvpn/ → /etc/openvpn/       (перезапись только файлов из репо)
 #      • root/ → /root/                     (перезапись только файлов из репо)
-# 5) Во всех скопированных файлах (кроме client/openvpn/vpn/*) заменяет "${FILEVPN_NAME}" и "$FILEVPN_NAME" на введённое имя
+# 5) Заменяет "${FILEVPN_NAME}" и "$FILEVPN_NAME" только в:
+#      • /root/antizapret/** (исключая client/openvpn/vpn)
+#      • /etc/openvpn/**
+#      • /root/bot.py и /root/client.sh (если есть)
 # 6) Принудительно пересоздаёт виртуальное окружение /root/venv и устанавливает зависимости из /root/requirements.txt
 # 7) Даёт всем скопированным файлам права 777
 # 8) Создаёт systemd-юнит vpnbot.service, включает автозапуск и запускает службу
@@ -27,7 +29,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "=============================================="
-echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.6"
+echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.6.1"
 echo "=============================================="
 echo
 
@@ -41,7 +43,7 @@ for pkg in "${REQUIRED_PKG[@]}"; do
     echo "  • Устанавливаем: $pkg"
     apt install -y "$pkg"
   else
-    echo "  • $pkg уже установлен — пропуск."
+    echo "  • $pkg уже установлен — пропускаем."
   fi
 done
 
@@ -148,27 +150,48 @@ echo "Копирование завершено."
 echo
 
 ### 6) Замена плейсхолдера "${FILEVPN_NAME}" и "$FILEVPN_NAME"
-// пропускаем любые пути вида */client/openvpn/vpn/*
+# Теперь заменяем только в:
+#  • /root/antizapret/**, исключая /root/antizapret/client/openvpn/vpn/**
+#  • /etc/openvpn/**
+#  • /root/bot.py и /root/client.sh (если они есть)
+
 echo "=== Шаг 6: Ищем и заменяем literal \"\${FILEVPN_NAME}\" и \"\$FILEVPN_NAME\" → \"$FILEVPN_NAME\" ==="
 
-TARGET_DIRS=("/root/antizapret" "/etc/openvpn" "/root")
-EXCLUDE_SUBPATH="client/openvpn/vpn"
+# 6.1) В /root/antizapret, исключая client/openvpn/vpn
+find /root/antizapret -type f ! -path "/root/antizapret/client/openvpn/vpn/*" | while IFS= read -r f; do
+  grep -q '\${FILEVPN_NAME}' "$f" && {
+    sed -i "s|\${FILEVPN_NAME}|${FILEVPN_NAME}|g" "$f"
+    echo "  Заменено \${FILEVPN_NAME} в: $f"
+  }
+  grep -q '\$FILEVPN_NAME' "$f" && {
+    sed -i "s|\$FILEVPN_NAME|${FILEVPN_NAME}|g" "$f"
+    echo "  Заменено \$FILEVPN_NAME в: $f"
+  }
+done || true
 
-for DIR in "${TARGET_DIRS[@]}"; do
-  if [ -d "$DIR" ]; then
-    # 6.1) заменить ${FILEVPN_NAME}
-    grep -RIl --exclude-dir="$EXCLUDE_SUBPATH" '\${FILEVPN_NAME}' "$DIR" 2>/dev/null | \
-    while IFS= read -r f; do
+# 6.2) В /etc/openvpn
+find /etc/openvpn -type f | while IFS= read -r f; do
+  grep -q '\${FILEVPN_NAME}' "$f" && {
+    sed -i "s|\${FILEVPN_NAME}|${FILEVPN_NAME}|g" "$f"
+    echo "  Заменено \${FILEVPN_NAME} в: $f"
+  }
+  grep -q '\$FILEVPN_NAME' "$f" && {
+    sed -i "s|\$FILEVPN_NAME|${FILEVPN_NAME}|g" "$f"
+    echo "  Заменено \$FILEVPN_NAME в: $f"
+  }
+done || true
+
+# 6.3) В /root/bot.py и /root/client.sh (если есть)
+for f in /root/bot.py /root/client.sh; do
+  if [ -f "$f" ]; then
+    grep -q '\${FILEVPN_NAME}' "$f" && {
       sed -i "s|\${FILEVPN_NAME}|${FILEVPN_NAME}|g" "$f"
       echo "  Заменено \${FILEVPN_NAME} в: $f"
-    done
-
-    # 6.2) заменить $FILEVPN_NAME
-    grep -RIl --exclude-dir="$EXCLUDE_SUBPATH" '\$FILEVPN_NAME' "$DIR" 2>/dev/null | \
-    while IFS= read -r f; do
+    }
+    grep -q '\$FILEVPN_NAME' "$f" && {
       sed -i "s|\$FILEVPN_NAME|${FILEVPN_NAME}|g" "$f"
       echo "  Заменено \$FILEVPN_NAME в: $f"
-    done
+    }
   fi
 done
 
@@ -212,7 +235,7 @@ if [ -d "/etc/openvpn" ]; then
   echo "  Права 777 выставлены на /etc/openvpn"
 fi
 
-# файлы из SRC_ROOT
+# Файлы из СSRC_ROOT
 if [ -d "$SRC_ROOT" ]; then
   find "$SRC_ROOT" -type f | while IFS= read -r srcf; do
     rel="${srcf#$SRC_ROOT/}"
