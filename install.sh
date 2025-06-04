@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Установочный скрипт для VPN-бота (TG-Bot-OpenVPN-Antizapret)
-# Версия: 2.5.1 — дополнительно заменяет "$FILEVPN_NAME" без фигурных скобок
+# Версия: 2.5.2 — надежная замена плейсхолдера в путях с пробелами
 # и даёт всем скопированным файлам права 777
 #
 # Что делает этот скрипт:
@@ -9,10 +9,11 @@
 # 2) Спрашивает BOT_TOKEN, ADMIN_ID и FILEVPN_NAME, сохраняет их в /root/.env
 # 3) Клонирует репозиторий во временную папку /tmp/antizapret-install и сбрасывает локальные правки
 # 4) Копирует подпапки из временного клона:
-#      • содержимое antizapret/ → /root/antizapret/  (перезапись только файлов, не трогая остальное)
-#      • содержимое etc/openvpn/ → /etc/openvpn/    (перезапись только файлов)
-#      • содержимое root/ → /root/                  (перезапись только файлов)
-# 5) Во всех скопированных файлах заменяет и "${FILEVPN_NAME}", и "$FILEVPN_NAME" на введённое имя (кроме install.sh)
+#      • содержимое antizapret/ → /root/antizapret/
+#      • содержимое etc/openvpn/ → /etc/openvpn/
+#      • содержимое root/ → /root/
+#    (перезаписывает файлы из репо, не трогая остальные)
+# 5) Во всех скопированных файлах заменяет и "${FILEVPN_NAME}", и "$FILEVPN_NAME" на введённое имя (нейтрализует пробелы)
 # 6) Принудительно пересоздаёт виртуальное окружение /root/venv и устанавливает зависимости из /root/requirements.txt
 # 7) Даёт всем скопированным файлам права 777
 # 8) Создаёт systemd-юнит vpnbot.service, включает автозапуск и запускает службу
@@ -27,7 +28,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "=============================================="
-echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.5.1"
+echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.5.2"
 echo "=============================================="
 echo
 
@@ -41,7 +42,7 @@ for pkg in "${REQUIRED_PKG[@]}"; do
     echo "  • Устанавливаем: $pkg"
     apt install -y "$pkg"
   else
-    echo "  • Пакет $pkg уже установлен — пропускаем."
+    echo "  • $pkg уже установлен — пропуск."
   fi
 done
 
@@ -109,14 +110,14 @@ git fetch origin "$BRANCH"
 git reset --hard "origin/$BRANCH"
 echo
 
-### 5) Копирование подпапок в целевые директории (перезаписывая только файлы из репо)
+### 5) Копирование подпапок в целевые директории (перезапись только файлов из репо)
 echo "=== Шаг 5: Копирование файлов из временного клона ==="
 
 # 5.1) antizapret → /root/antizapret
 SRC_ANTIZAPRET="$TMP_DIR/antizapret"
 DST_ANTIZAPRET="/root/antizapret"
 if [ -d "$SRC_ANTIZAPRET" ]; then
-  echo "  Копируем файлы из '$SRC_ANTIZAPRET' → '$DST_ANTIZAPRET' (перезапись только файлов из репо)"
+  echo "  Копируем файлы из '$SRC_ANTIZAPRET' → '$DST_ANTIZAPRET' (перезапись без удаления остального)"
   mkdir -p "$DST_ANTIZAPRET"
   cp -r "$SRC_ANTIZAPRET/"* "$DST_ANTIZAPRET/"
 else
@@ -127,18 +128,18 @@ fi
 SRC_OPENVPN="$TMP_DIR/etc/openvpn"
 DST_OPENVPN="/etc/openvpn"
 if [ -d "$SRC_OPENVPN" ]; then
-  echo "  Копируем файлы из '$SRC_OPENVPN' → '$DST_OPENVPN' (перезапись только файлов из репо)"
+  echo "  Копируем файлы из '$SRC_OPENVPN' → '$DST_OPENVPN' (перезапись без удаления остального)"
   mkdir -p "$DST_OPENVPN"
   cp -r "$SRC_OPENVPN/"* "$DST_OPENVPN/"
 else
   echo "  ⚠️  Папка '$SRC_OPENVPN' не найдена — проверьте структуру."
 fi
 
-# 5.3) root → /root  (бот, client.sh, requirements.txt и т.д.)
+# 5.3) root → /root
 SRC_ROOT="$TMP_DIR/root"
 DST_ROOT="/root"
 if [ -d "$SRC_ROOT" ]; then
-  echo "  Копируем файлы из '$SRC_ROOT' → '$DST_ROOT' (перезапись только файлов из репо)"
+  echo "  Копируем файлы из '$SRC_ROOT' → '$DST_ROOT' (перезапись без удаления остального)"
   cp -r "$SRC_ROOT/"* "$DST_ROOT/"
 else
   echo "  ⚠️  Папка '$SRC_ROOT' не найдена — проверьте структуру репозитория."
@@ -147,22 +148,20 @@ fi
 echo "Копирование завершено."
 echo
 
-### 6) Замена плейсхолдера "${FILEVPN_NAME}" и "$FILEVPN_NAME"
+### 6) Замена плейсхолдера "${FILEVPN_NAME}" и "$FILEVPN_NAME" (с учётом пробелов)
 echo "=== Шаг 6: Ищем и заменяем literal \"\${FILEVPN_NAME}\" и \"\$FILEVPN_NAME\" → \"$FILEVPN_NAME\" ==="
 
 TARGET_DIRS=("/root/antizapret" "/etc/openvpn" "/root")
 
 for DIR in "${TARGET_DIRS[@]}"; do
   if [ -d "$DIR" ]; then
-    FILES=$(grep -RIlE '\${FILEVPN_NAME}|\$FILEVPN_NAME' "$DIR" || true)
-    for f in $FILES; do
-      # Исключаем install.sh в /root, если он скопировался
-      if [[ "$(basename "$f")" == "install.sh" ]]; then
-        continue
-      fi
+    # grep с опцией -Z выдаёт null-terminated строки.
+    # find и xargs тоже могли бы помочь, но здесь удобно взять grep -RIlZ.
+    grep -RIlZ --exclude="install.sh" -e '\${FILEVPN_NAME}' -e '\$FILEVPN_NAME' "$DIR" 2>/dev/null | \
+    while IFS= read -r -d '' f; do
       # Сначала заменяем "${FILEVPN_NAME}"
       sed -i "s|\${FILEVPN_NAME}|${FILEVPN_NAME}|g" "$f"
-      # Потом заменяем "$FILEVPN_NAME"
+      # Затем заменяем "$FILEVPN_NAME"
       sed -i "s|\$FILEVPN_NAME|${FILEVPN_NAME}|g" "$f"
       echo "  Заменено в: $f"
     done
@@ -195,30 +194,32 @@ deactivate
 
 echo
 
-### 8) Проставляем права 777 всем скопированным файлам
+### 8) Даем всем скопированным файлам права 777
 echo "=== Шаг 8: Даем полные права (777) всем скопированным файлам ==="
 
-# Все файлы в /root/antizapret
+# Все файлы и папки в /root/antizapret
 if [ -d "/root/antizapret" ]; then
-  chmod -R 777 /root/antizapret
+  chmod -R 777 "/root/antizapret"
   echo "  Права 777 выставлены на /root/antizapret"
 fi
 
-# Все файлы в /etc/openvpn
+# Все файлы и папки в /etc/openvpn
 if [ -d "/etc/openvpn" ]; then
-  chmod -R 777 /etc/openvpn
+  chmod -R 777 "/etc/openvpn"
   echo "  Права 777 выставлены на /etc/openvpn"
 fi
 
 # Все файлы, скопированные из SRC_ROOT (root/*)
 if [ -d "$SRC_ROOT" ]; then
-  for item in "$SRC_ROOT"/*; do
-    base=$(basename "$item")
-    if [ -e "/root/$base" ]; then
-      chmod -R 777 "/root/$base"
-      echo "  Права 777 выставлены на /root/$base"
+  while IFS= read -r -d '' item; do
+    # Берём имя относительно SRC_ROOT
+    rel="${item#$SRC_ROOT/}"
+    target="/root/$rel"
+    if [ -e "$target" ]; then
+      chmod -R 777 "$target"
+      echo "  Права 777 выставлены на $target"
     fi
-  done
+  done < <(find "$SRC_ROOT" -print0)
 fi
 
 echo
@@ -248,7 +249,7 @@ echo "  Юнит записан: /etc/systemd/system/vpnbot.service"
 echo
 
 ### 10) Перезагрузка systemd, автозапуск, запуск службы
-echo "=== Шаг 10: Перезагрузка systemd, включение автозапуска и запуск vpnbot.service ==="
+echo "=== Шаг 10: Перезагрузка systemd и запуск vpnbot.service ==="
 systemctl daemon-reload
 systemctl enable vpnbot.service
 systemctl restart vpnbot.service
