@@ -225,10 +225,10 @@ class VPNSetup(StatesGroup):
 
 # Описание для вашего бота
 BOT_DESCRIPTION = """
-ВСТАВЬ СВОЕ
+ТУТ ВАШ ТЕКСТ
 """
 
-BOT_SHORT_DESCRIPTION = "ВСТАВЬ СВОЕ"
+BOT_SHORT_DESCRIPTION = "ТУТ ВАШ ТЕКСТ"
 
 
 def user_registered(user_id):
@@ -434,7 +434,7 @@ async def update_bot_description():
         await bot.set_my_description(BOT_DESCRIPTION, language_code="ru")
 
 
-BOT_ABOUT = "ВСТАВЬ СВОЕ"
+BOT_ABOUT = "ТУТ ВАШ ТЕКСТ"
 
 
 async def update_bot_about():
@@ -734,9 +734,9 @@ async def download_wg_config(callback: types.CallbackQuery):
     username = callback.from_user.username or "Без username"
 
     if wg_type == "vpn":
-        file_path = f"/root/antizapret/client/wireguard/vpn/ВСТАВЬ СВОЕ - Обычный VPN -{client_name}-wg.conf"
+        file_path = f"/root/antizapret/client/wireguard/vpn/$FILEVPN_NAME - Обычный VPN -{client_name}-wg.conf"
     else:
-        file_path = f"/root/antizapret/client/wireguard/antizapret/ВСТАВЬ СВОЕ -{client_name}-wg.conf"
+        file_path = f"/root/antizapret/client/wireguard/antizapret/$FILEVPN_NAME -{client_name}-wg.conf"
 
     # Генерируем, если нет файла
     if not os.path.exists(file_path):
@@ -775,9 +775,9 @@ async def download_wg_config(callback: types.CallbackQuery):
     username = callback.from_user.username or "Без username"
 
     if wg_type == "vpn":
-        file_path = f"/root/antizapret/client/wireguard/vpn/ВСТАВЬ СВОЕ - Обычный VPN -{client_name}-wg.conf"
+        file_path = f"/root/antizapret/client/wireguard/vpn/$FILEVPN_NAME - Обычный VPN -{client_name}-wg.conf"
     else:
-        file_path = f"/root/antizapret/client/wireguard/antizapret/ВСТАВЬ СВОЕ -{client_name}-wg.conf"
+        file_path = f"/root/antizapret/client/wireguard/antizapret/$FILEVPN_NAME -{client_name}-wg.conf"
 
     # Генерируем если нет файла
     if not os.path.exists(file_path):
@@ -1303,9 +1303,9 @@ async def download_amnezia_config(callback: types.CallbackQuery):
     username = callback.from_user.username or "Без username"
 
     if am_type == "vpn":
-        file_path = f"/root/antizapret/client/amneziawg/vpn/ВСТАВЬ СВОЕ - Обычный VPN -{client_name}-am.conf"
+        file_path = f"/root/antizapret/client/amneziawg/vpn/$FILEVPN_NAME - Обычный VPN -{client_name}-am.conf"
     else:
-        file_path = f"/root/antizapret/client/amneziawg/antizapret/ВСТАВЬ СВОЕ -{client_name}-am.conf"
+        file_path = f"/root/antizapret/client/amneziawg/antizapret/$FILEVPN_NAME -{client_name}-am.conf"
 
     if not os.path.exists(file_path):
         subprocess.run(['/root/antizapret/client.sh', '4', client_name], check=True)
@@ -1641,8 +1641,8 @@ def create_user_menu(client_name, back_callback=None, is_admin=False, user_id=No
         if back_callback:
             keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)])
     else:
-        keyboard.append([InlineKeyboardButton(text="💬 Связь с поддержкой", url="https://t.me/ВСТАВЬ СВОЕ")])
-        keyboard.append([InlineKeyboardButton(text="ℹ️ Как пользоваться", url="=ВСТАВЬ СВОЕ/install/")])
+        keyboard.append([InlineKeyboardButton(text="💬 Связь с поддержкой", url="https://www.google.com/")])
+        keyboard.append([InlineKeyboardButton(text="ℹ️ Как пользоваться", url="=https://www.google.com/")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -2080,7 +2080,7 @@ async def send_vless_link(callback: types.CallbackQuery):
         pass
 
     vless_link = (
-        "ВСТАВЬ СВОЕ в кавычках главное чтоб была ссылка на VLESS"
+        "ТУТ ВАША VLESS в кавычках главное чтоб была ссылка на VLESS"
     )
 
     # Текст инструкции с «крупными» заголовками и смайлами
@@ -2522,7 +2522,7 @@ async def select_openvpn_config(callback: types.CallbackQuery):
     # Добавляем ссылку на инструкцию перед кнопками
     text = (
         "Выберите тип конфигурации OpenVPN:\n\n"
-        "📖 <a href=\"ВСТАВЬ СВОЕ install/\">Инструкция по подключению для 🍎Apple, 🤖Android и 🖥PC</a>"
+        "📖 <a href=\"https://www.google.com/\">Инструкция по подключению для 🍎Apple, 🤖Android и 🖥PC</a>"
     )
 
     await bot.send_message(
@@ -2538,9 +2538,9 @@ async def select_openvpn_config(callback: types.CallbackQuery):
 
 def get_openvpn_filename(client_name, config_type):
     if config_type == "vpn":
-        return f"ВСТАВЬ СВОЕ - Обычный VPN - {client_name}.ovpn"
+        return f"$FILEVPN_NAME - Обычный VPN - {client_name}.ovpn"
     elif config_type == "antizapret":
-        return f"ВСТАВЬ СВОЕ - {client_name}.ovpn"
+        return f"$FILEVPN_NAME - {client_name}.ovpn"
 
 
 # Вывод конфига для OpenVPN
@@ -2560,10 +2560,10 @@ async def download_openvpn_config(callback: types.CallbackQuery):
 
     # Определяем пути
     if config_type == "vpn":
-        file_name = f"ВСТАВЬ СВОЕ - Обычный VPN - {client_name}.ovpn"
+        file_name = f"$FILEVPN_NAME - Обычный VPN - {client_name}.ovpn"
         base_path = "/root/antizapret/client/openvpn/vpn/"
     else:
-        file_name = f"ВСТАВЬ СВОЕ - {client_name}.ovpn"
+        file_name = f"$FILEVPN_NAME - {client_name}.ovpn"
         base_path = "/root/antizapret/client/openvpn/antizapret/"
 
     file_path = os.path.join(base_path, file_name)
