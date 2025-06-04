@@ -380,7 +380,6 @@ async def _deny_unapproved_callback(callback: types.CallbackQuery):
         "❌ У вас нет доступа. Чтобы получить VPN, сначала отправьте заявку через /start.",
         show_alert=True
     )
-)
 
 
 @dp.callback_query(lambda c: c.data.startswith("approve_rename_"))
