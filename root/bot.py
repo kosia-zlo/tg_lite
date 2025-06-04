@@ -582,164 +582,164 @@ def create_main_menu():
 #Для VLESS. Убери ## и выше тоже. Где поле ОНЛАЙН VLESS
 #@dp.callback_query(lambda c: c.data == "vless_online")
 #async def vless_online_handler(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-
-    # 1) Проверяем куки и авторизацию
-    if "3x-ui" not in session.cookies.get_dict():
-        ok = authenticate()
-        if not ok:
-            await bot.send_message(
-                user_id,
-                "❗ Не удалось аутентифицироваться на 3x-UI. Проверьте логин/пароль или доступ."
-            )
-            await callback.answer()
-            return
-
-    # 2) Выполняем POST-запрос
-    try:
-        resp = session.post(BASE_URL + ONLINES_PATH,
-                            headers={"Content-Type": "application/json"}, timeout=10)
-    except Exception as e:
-        logging.error(f"[VLESS_ONLINE] Network error при запросе /onlines: {e}")
-        # Удалим текущее меню, покажем ошибку и вернем главную
-        try: await callback.message.delete()
-        except: pass
-        err_msg = await bot.send_message(
-            user_id,
-            "❗ Произошла сетевая ошибка при получении списка онлайн VLESS клиентов."
-        )
-        await asyncio.sleep(1)
-        try: await err_msg.delete()
-        except: pass
-        stats = get_server_info()
-        menu = await bot.send_message(
-            user_id,
-            stats + "\n<b>Главное меню:</b>",
-            reply_markup=create_main_menu(),
-            parse_mode="HTML"
-        )
-        set_last_menu_id(user_id, menu.message_id)
-        await callback.answer()
-        return
-
-    # 3) Проверяем HTTP-статус
-    if resp.status_code != 200:
-        logging.error(f"[VLESS_ONLINE] Некорректный статус {resp.status_code}, body={resp.text!r}")
-        try: await callback.message.delete()
-        except: pass
-        err_msg = await bot.send_message(
-            user_id,
-            f"❗ Сервер вернул статус {resp.status_code} вместо JSON."
-        )
-        await asyncio.sleep(1)
-        try: await err_msg.delete()
-        except: pass
-        stats = get_server_info()
-        menu = await bot.send_message(
-            user_id,
-            stats + "\n<b>Главное меню:</b>",
-            reply_markup=create_main_menu(),
-            parse_mode="HTML"
-        )
-        set_last_menu_id(user_id, menu.message_id)
-        await callback.answer()
-        return
-
-    # 4) Пробуем распарсить JSON, но оборачиваем в try/except
-    try:
-        data = resp.json()
-    except ValueError as e:
-        logging.error(f"[VLESS_ONLINE] Не JSON в ответе: {e}; content={resp.text!r}")
-        # Удаляем текущее меню
-        try: await callback.message.delete()
-        except: pass
-        info_msg = await bot.send_message(
-            user_id,
-            "ℹ️ Сервер вернул пустой или некорректный JSON для онлайн VLESS."
-        )
-        await asyncio.sleep(1)
-        try: await info_msg.delete()
-        except: pass
-        stats = get_server_info()
-        menu = await bot.send_message(
-            user_id,
-            stats + "\n<b>Главное меню:</b>",
-            reply_markup=create_main_menu(),
-            parse_mode="HTML"
-        )
-        set_last_menu_id(user_id, menu.message_id)
-        await callback.answer()
-        return
-
-    # 5) Если JSON разобран, проверяем success-флаг
-    if not isinstance(data, dict) or not data.get("success"):
-        try: await callback.message.delete()
-        except: pass
-        info_msg = await bot.send_message(
-            user_id,
-            "ℹ️ Сервер вернул success=false или неожиданный формат JSON."
-        )
-        await asyncio.sleep(1)
-        try: await info_msg.delete()
-        except: pass
-        stats = get_server_info()
-        menu = await bot.send_message(
-            user_id,
-            stats + "\n<b>Главное меню:</b>",
-            reply_markup=create_main_menu(),
-            parse_mode="HTML"
-        )
-        set_last_menu_id(user_id, menu.message_id)
-        await callback.answer()
-        return
-
-    # 6) Извлекаем список онлайн-клиентов
-    online_list = data.get("obj", [])
-    if not online_list:
-        try: await callback.message.delete()
-        except: pass
-        info_msg = await bot.send_message(
-            user_id,
-            "ℹ️ В данный момент нет активных (онлайн) VLESS клиентов."
-        )
-        await asyncio.sleep(1)
-        try: await info_msg.delete()
-        except: pass
-        stats = get_server_info()
-        menu = await bot.send_message(
-            user_id,
-            stats + "\n<b>Главное меню:</b>",
-            reply_markup=create_main_menu(),
-            parse_mode="HTML"
-        )
-        set_last_menu_id(user_id, menu.message_id)
-        await callback.answer()
-        return
-
-    # 7) Формируем текст со списком
-    text_lines = ["🟢 <b>Сейчас онлайн VLESS:</b>"]
-    for nickname in online_list:
-        safe_name = nickname.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        text_lines.append(f"– <code>{safe_name}</code>")
-    text = "\n".join(text_lines)
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]
-    ])
-
-    try:
-        await callback.message.delete()
-    except:
-        pass
-
-    await bot.send_message(
-        user_id,
-        text,
-        parse_mode="HTML",
-        reply_markup=kb,
-        disable_web_page_preview=True
-    )
-    await callback.answer()
+#    user_id = callback.from_user.id
+#
+#    # 1) Проверяем куки и авторизацию
+#    if "3x-ui" not in session.cookies.get_dict():
+#        ok = authenticate()
+#        if not ok:
+#            await bot.send_message(
+#                user_id,
+#                "❗ Не удалось аутентифицироваться на 3x-UI. Проверьте логин/пароль или доступ."
+#            )
+#            await callback.answer()
+#            return
+#
+#    # 2) Выполняем POST-запрос
+#    try:
+#        resp = session.post(BASE_URL + ONLINES_PATH,
+#                            headers={"Content-Type": "application/json"}, timeout=10)
+#    except Exception as e:
+#        logging.error(f"[VLESS_ONLINE] Network error при запросе /onlines: {e}")
+#        # Удалим текущее меню, покажем ошибку и вернем главную
+#        try: await callback.message.delete()
+#        except: pass
+#        err_msg = await bot.send_message(
+#            user_id,
+#            "❗ Произошла сетевая ошибка при получении списка онлайн VLESS клиентов."
+#        )
+#        await asyncio.sleep(1)
+#        try: await err_msg.delete()
+#        except: pass
+#        stats = get_server_info()
+#        menu = await bot.send_message(
+#            user_id,
+#            stats + "\n<b>Главное меню:</b>",
+#            reply_markup=create_main_menu(),
+#            parse_mode="HTML"
+#        )
+#        set_last_menu_id(user_id, menu.message_id)
+#        await callback.answer()
+#        return
+#
+#    # 3) Проверяем HTTP-статус
+#    if resp.status_code != 200:
+#        logging.error(f"[VLESS_ONLINE] Некорректный статус {resp.status_code}, body={resp.text!r}")
+#        try: await callback.message.delete()
+#        except: pass
+#        err_msg = await bot.send_message(
+#            user_id,
+#            f"❗ Сервер вернул статус {resp.status_code} вместо JSON."
+#        )
+#        await asyncio.sleep(1)
+#        try: await err_msg.delete()
+#        except: pass
+#        stats = get_server_info()
+#        menu = await bot.send_message(
+#            user_id,
+#            stats + "\n<b>Главное меню:</b>",
+#            reply_markup=create_main_menu(),
+#            parse_mode="HTML"
+#        )
+#        set_last_menu_id(user_id, menu.message_id)
+#        await callback.answer()
+#        return
+#
+#    # 4) Пробуем распарсить JSON, но оборачиваем в try/except
+#    try:
+#        data = resp.json()
+#    except ValueError as e:
+#        logging.error(f"[VLESS_ONLINE] Не JSON в ответе: {e}; content={resp.text!r}")
+#        # Удаляем текущее меню
+#        try: await callback.message.delete()
+#        except: pass
+#        info_msg = await bot.send_message(
+#            user_id,
+#            "ℹ️ Сервер вернул пустой или некорректный JSON для онлайн VLESS."
+#        )
+#        await asyncio.sleep(1)
+#        try: await info_msg.delete()
+#        except: pass
+#        stats = get_server_info()
+#        menu = await bot.send_message(
+#            user_id,
+#            stats + "\n<b>Главное меню:</b>",
+#            reply_markup=create_main_menu(),
+#            parse_mode="HTML"
+#        )
+#        set_last_menu_id(user_id, menu.message_id)
+#        await callback.answer()
+#        return
+#
+#    # 5) Если JSON разобран, проверяем success-флаг
+#    if not isinstance(data, dict) or not data.get("success"):
+#        try: await callback.message.delete()
+#        except: pass
+#        info_msg = await bot.send_message(
+#            user_id,
+#            "ℹ️ Сервер вернул success=false или неожиданный формат JSON."
+#        )
+#        await asyncio.sleep(1)
+#        try: await info_msg.delete()
+#        except: pass
+#        stats = get_server_info()
+#        menu = await bot.send_message(
+#            user_id,
+#            stats + "\n<b>Главное меню:</b>",
+#            reply_markup=create_main_menu(),
+#            parse_mode="HTML"
+#        )
+#        set_last_menu_id(user_id, menu.message_id)
+#        await callback.answer()
+#        return
+#
+#    # 6) Извлекаем список онлайн-клиентов
+#    online_list = data.get("obj", [])
+#    if not online_list:
+#        try: await callback.message.delete()
+#        except: pass
+#        info_msg = await bot.send_message(
+#            user_id,
+#            "ℹ️ В данный момент нет активных (онлайн) VLESS клиентов."
+#        )
+#        await asyncio.sleep(1)
+#        try: await info_msg.delete()
+#        except: pass
+#        stats = get_server_info()
+#        menu = await bot.send_message(
+#            user_id,
+#            stats + "\n<b>Главное меню:</b>",
+#            reply_markup=create_main_menu(),
+#            parse_mode="HTML"
+#        )
+#        set_last_menu_id(user_id, menu.message_id)
+#        await callback.answer()
+#        return
+#
+#    # 7) Формируем текст со списком
+#    text_lines = ["🟢 <b>Сейчас онлайн VLESS:</b>"]
+#    for nickname in online_list:
+#        safe_name = nickname.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+#        text_lines.append(f"– <code>{safe_name}</code>")
+#    text = "\n".join(text_lines)
+#
+#    kb = InlineKeyboardMarkup(inline_keyboard=[
+#        [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]
+#    ])
+#
+#    try:
+#        await callback.message.delete()
+#    except:
+#        pass
+#
+#    await bot.send_message(
+#        user_id,
+#        text,
+#        parse_mode="HTML",
+#        reply_markup=kb,
+#        disable_web_page_preview=True
+#    )
+#    await callback.answer()
 
 
 
