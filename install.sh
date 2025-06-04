@@ -1,51 +1,56 @@
 #!/bin/bash
 #
 # Установочный скрипт для VPN-бота (TG-Bot-OpenVPN-Antizapret)
-# Версия: 2.0 — теперь автоматически ставит python3-venv и зависимые пакеты
+# Версия: 2.2 — копирует подпапки напрямую в /root/antizapret, /etc/openvpn, /root/
 #
 # Что делает этот скрипт:
-# 1) Проверяет и ставит (при необходимости) git, wget, curl, python3-venv
-# 2) Спрашивает BOT_TOKEN и ADMIN_ID, сохраняет их в .env
-# 3) Спрашивает FILEVPN_NAME, заменяет плейсхолдер "${FILEVPN_NAME}" на введённое имя во всех файлах (кроме install.sh)
-# 4) Клонирует (или обновляет) репозиторий, создаёт виртуальное окружение, устанавливает зависимости
-# 5) Делает client.sh исполняемым (если он есть)
-# 6) Создаёт systemd-юнит vpnbot.service, включается автозапуск и сразу стартует его
-# 7) Выводит на экран базовые команды для управления
+# 1) Проверяет и устанавливает (при необходимости) git, wget, curl, python3-venv, python3-pip
+# 2) Спрашивает BOT_TOKEN, ADMIN_ID и FILEVPN_NAME, сохраняет их в /root/.env
+# 3) Клонирует репозиторий во временную папку /tmp/antizapret-install
+# 4) Сбрасывает любые локальные правки во временном клоне и подтягивает ветку main
+# 5) Копирует:
+#      - все содержимое папки antizapret → /root/antizapret
+#      - все содержимое папки etc/openvpn → /etc/openvpn
+#      - все содержимое папки root       → /root
+#    сохраняя внутри поддиректории то, что есть в репозитории
+# 6) Во всех скопированных файлах (кроме самого install.sh) заменяет "${FILEVPN_NAME}" на введённое вами имя
+# 7) Создаёт виртуальное окружение в /root/venv и устанавливает зависимости (из /root/requirements.txt)
+# 8) Делает /root/client.sh исполняемым (если он есть)
+# 9) Создаёт systemd-юнит vpnbot.service, включает автозапуск, запускает службу
+# 10) Выводит команды для управления
 
 set -e
 
-### 0) Проверка, что скрипт запущен под root
+### 0) Проверка root
 if [ "$EUID" -ne 0 ]; then
   echo "Ошибка: этот скрипт нужно запустить от root."
   exit 1
 fi
 
 echo "=============================================="
-echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.0"
+echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.2"
 echo "=============================================="
 echo
 
-### 1) Проверка и установка обязательных пакетов
-echo "=== Шаг 1: Устанавливаем необходимые системные пакеты ==="
+### 1) Системные зависимости
+echo "=== Шаг 1: Установка системных пакетов (git, wget, curl, python3-venv, python3-pip) ==="
 apt update -qq
 
-# Список нужных пакетов
 REQUIRED_PKG=("git" "wget" "curl" "python3-venv" "python3-pip")
 
 for pkg in "${REQUIRED_PKG[@]}"; do
   if ! dpkg -s "$pkg" &>/dev/null; then
-    echo "  • Устанавливаем пакет: $pkg"
+    echo "  • Устанавливаем: $pkg"
     apt install -y "$pkg"
   else
-    echo "  • Пакет $pkg уже установлен — пропускаем."
+    echo "  • $pkg уже установлен."
   fi
 done
 
-echo "Системные зависимости установлены."
 echo
 
-### 2) Запрашиваем BOT_TOKEN и ADMIN_ID
-echo "=== Шаг 2: Настройка BOT_TOKEN и ADMIN_ID ==="
+### 2) Запрос BOT_TOKEN, ADMIN_ID, FILEVPN_NAME
+echo "=== Шаг 2: Настройка BOT_TOKEN, ADMIN_ID и FILEVPN_NAME ==="
 read -p "Введите BOT_TOKEN (токен из BotFather): " BOT_TOKEN
 BOT_TOKEN="$(echo "$BOT_TOKEN" | xargs)"
 if [ -z "$BOT_TOKEN" ]; then
@@ -53,20 +58,18 @@ if [ -z "$BOT_TOKEN" ]; then
   exit 1
 fi
 
-read -p "Введите ADMIN_ID (ваш Telegram User ID, например 123456789): " ADMIN_ID
+read -p "Введите ADMIN_ID (ваш Telegram User ID): " ADMIN_ID
 ADMIN_ID="$(echo "$ADMIN_ID" | xargs)"
 if [ -z "$ADMIN_ID" ]; then
   echo "Ошибка: ADMIN_ID не может быть пустым."
   exit 1
 fi
 
-### 3) Запрашиваем FILEVPN_NAME
 echo
-echo "=== Шаг 3: Ввод базового имени для VPN-файлов (плейсхолдер \"\${FILEVPN_NAME}\") ==="
-read -p "Введите желаемое имя (например, MyVPN): " FILEVPN_NAME
+read -p "Введите базовое имя для VPN-файлов (FILEVPN_NAME), например: БичиVPN или MyVPN: " FILEVPN_NAME
 FILEVPN_NAME="$(echo "$FILEVPN_NAME" | xargs)"
 if [ -z "$FILEVPN_NAME" ]; then
-  echo "Ошибка: имя для VPN-файлов не может быть пустым."
+  echo "Ошибка: FILEVPN_NAME не может быть пустым."
   exit 1
 fi
 
@@ -77,83 +80,129 @@ echo "  ADMIN_ID     = \"$ADMIN_ID\""
 echo "  FILEVPN_NAME = \"$FILEVPN_NAME\""
 echo
 
-### 4) Готовим каталог репозитория
-REPO_DIR="/root/antizapret-bot"
-
-if [ -d "$REPO_DIR/.git" ]; then
-  echo "Каталог $REPO_DIR уже содержит Git-репозиторий."
-  read -p "Обновить его (git pull) [Y/n]? " yn
-  yn="${yn:-Y}"
-  if [[ "$yn" =~ ^[Yy]$ ]]; then
-    echo "  Выполняем git pull..."
-    cd "$REPO_DIR"
-    git pull --ff-only
-  else
-    echo "  Пропускаем обновление."
-  fi
-else
-  echo "Клонируем репозиторий из GitHub в $REPO_DIR..."
-  git clone https://github.com/VATAKATru61/TG-Bot-OpenVPN-Antizapret.git "$REPO_DIR"
-fi
-
-cd "$REPO_DIR"
-
-### 5) Создаём (или очищаем) файл .env с нашими переменными
-echo
-echo "=== Шаг 4: Запись переменных в .env ==="
-cat > ".env" <<EOF
+### 3) Копируем .env в /root
+echo "=== Шаг 3: Запись переменных в /root/.env ==="
+cat > "/root/.env" <<EOF
 BOT_TOKEN="$BOT_TOKEN"
 ADMIN_ID="$ADMIN_ID"
 FILEVPN_NAME="$FILEVPN_NAME"
 EOF
-echo "  Файл .env записан."
-
-### 6) Заменяем "${FILEVPN_NAME}" → введённое имя во всех файлах, кроме самого install.sh
+echo "  Файл /root/.env записан."
 echo
-echo "=== Шаг 5: Ищем и заменяем literal \"\${FILEVPN_NAME}\" → \"$FILEVPN_NAME\" ==="
-# Находим файлы, где встречается плейсхолдер, но пропускаем этот install.sh
-FILES_WITH_PLACEHOLDER=$(grep -RIl '\${FILEVPN_NAME}' . | grep -v "./install.sh")
 
-if [ -z "$FILES_WITH_PLACEHOLDER" ]; then
-  echo "  ⚠️  Ни один файл (кроме install.sh) с \"\${FILEVPN_NAME}\" не найден."
-  echo "      Проверьте, что вы действительно вставили плейсхолдер \"\${FILEVPN_NAME}\" в bot.py, client.sh, шаблоны и т. д."
-else
-  for f in $FILES_WITH_PLACEHOLDER; do
-    sed -i "s|\${FILEVPN_NAME}|${FILEVPN_NAME}|g" "$f"
-    echo "  Заменено в: $f"
-  done
+### 4) Клонирование репозитория во временную папку
+TMP_DIR="/tmp/antizapret-install"
+GIT_URL="https://github.com/VATAKATru61/TG-Bot-OpenVPN-Antizapret.git"
+BRANCH="main"
+
+# Если уже клонировали ранее в TMP_DIR, удалим старый перед новым клоном
+if [ -d "$TMP_DIR" ]; then
+  echo "Удаляем старую временную папку $TMP_DIR"
+  rm -rf "$TMP_DIR"
 fi
 
-### 7) Создаём виртуальное окружение в /root/venv и устанавливаем зависимости
-VENV_DIR="/root/venv"
+echo "=== Шаг 4: Клонируем репозиторий в $TMP_DIR ==="
+git clone "$GIT_URL" "$TMP_DIR"
+cd "$TMP_DIR"
+git checkout "$BRANCH"
+
+### 5) Сбрасываем любые локальные правки и подтягиваем свежую main
 echo
-echo "=== Шаг 6: Установка Python-виртуального окружения ==="
+echo "Сбрасываем локальные изменения и подтягиваем origin/$BRANCH..."
+git fetch origin "$BRANCH"
+git reset --hard "origin/$BRANCH"
+
+### 6) Копируем нужные подпапки в целевые директории
+echo
+echo "=== Шаг 5: Копирование файлов в нужные каталоги ==="
+
+# 6.1) Папка antizapret → /root/antizapret
+SRC_ANTIZAPRET="$TMP_DIR/antizapret"
+DST_ANTIZAPRET="/root/antizapret"
+if [ -d "$SRC_ANTIZAPRET" ]; then
+  echo "  Копируем '$SRC_ANTIZAPRET' → '$DST_ANTIZAPRET' (с перезаписью)"
+  rm -rf "$DST_ANTIZAPRET"
+  mkdir -p "$DST_ANTIZAPRET"
+  cp -r "$SRC_ANTIZAPRET/"* "$DST_ANTIZAPRET/"
+else
+  echo "  ⚠️  Папка '$SRC_ANTIZAPRET' не найдена — возможно, структура репо изменилась."
+fi
+
+# 6.2) Папка etc/openvpn → /etc/openvpn
+SRC_OPENVPN="$TMP_DIR/etc/openvpn"
+DST_OPENVPN="/etc/openvpn"
+if [ -d "$SRC_OPENVPN" ]; then
+  echo "  Копируем '$SRC_OPENVPN' → '$DST_OPENVPN' (с перезаписью)"
+  mkdir -p "$DST_OPENVPN"
+  cp -r "$SRC_OPENVPN/"* "$DST_OPENVPN/"
+else
+  echo "  ⚠️  Папка '$SRC_OPENVPN' не найдена."
+fi
+
+# 6.3) Вся папка root (файлы) → /root
+SRC_ROOT="$TMP_DIR/root"
+DST_ROOT="/root"
+if [ -d "$SRC_ROOT" ]; then
+  echo "  Копируем '$SRC_ROOT' → '$DST_ROOT' (с перезаписью в /root)"
+  cp -r "$SRC_ROOT/"* "$DST_ROOT/"
+else
+  echo "  ⚠️  Папка '$SRC_ROOT' не найдена."
+fi
+
+echo "Копирование завершено."
+echo
+
+### 7) Заменяем плейсхолдеры "${FILEVPN_NAME}" → введённое имя
+echo "=== Шаг 6: Ищем и заменяем literal \"\${FILEVPN_NAME}\" → \"$FILEVPN_NAME\" во всех целевых местах ==="
+
+# Перечислим директории, где нужно искать: /root/antizapret, /etc/openvpn, /root
+TARGET_DIRS=("/root/antizapret" "/etc/openvpn" "/root")
+
+for DIR in "${TARGET_DIRS[@]}"; do
+  if [ -d "$DIR" ]; then
+    # Ищем файлы с "${FILEVPN_NAME}", исключая сам install.sh
+    FILES=$(grep -RIl '\${FILEVPN_NAME}' "$DIR" || true)
+    for f in $FILES; do
+      # Исключаем, если этот файл — сам install.sh (вдруг скопировался)
+      if [[ "$(basename "$f")" == "install.sh" ]]; then
+        continue
+      fi
+      sed -i "s|\${FILEVPN_NAME}|${FILEVPN_NAME}|g" "$f"
+      echo "  Заменено в: $f"
+    done
+  fi
+done
+
+### 8) Создаем виртуальное окружение и устанавливаем зависимости
+echo
+echo "=== Шаг 7: Установка виртуального окружения и зависимостей ==="
+VENV_DIR="/root/venv"
 
 if [ ! -d "$VENV_DIR" ]; then
-  echo "  Создаём venv: python3 -m venv $VENV_DIR"
+  echo "  Устанавливаем venv: python3 -m venv $VENV_DIR"
   python3 -m venv "$VENV_DIR"
 else
-  echo "  Виртуальное окружение $VENV_DIR уже существует — пропускаем создание."
+  echo "  Виртуальное окружение $VENV_DIR уже существует — пропускаем."
 fi
 
-echo "  Активируем venv и устанавливаем библиотеки из requirements.txt"
+echo "  Активируем venv и устанавливаем зависимости из /root/requirements.txt"
 source "$VENV_DIR/bin/activate"
-if [ -f "requirements.txt" ]; then
+if [ -f "/root/requirements.txt" ]; then
   pip install --upgrade pip
-  pip install -r requirements.txt
+  pip install -r /root/requirements.txt
 else
-  echo "  ⚠️  Файл requirements.txt не найден — зависимости не установлены!"
+  echo "  ⚠️  /root/requirements.txt не найден — зависимости не установлены!"
 fi
 deactivate
 
-### 8) Делаем client.sh исполняемым (если он существует)
-if [ -f "client.sh" ]; then
-  chmod +x client.sh
+### 9) Делаем /root/client.sh исполняемым (если есть)
+if [ -f "/root/client.sh" ]; then
+  chmod +x /root/client.sh
 fi
 
-### 9) Создаём systemd-юнит vpnbot.service
+### 10) Создаем systemd-юнит vpnbot.service
 echo
-echo "=== Шаг 7: Создание systemd-юнита /etc/systemd/system/vpnbot.service ==="
+echo "=== Шаг 8: Создание systemd-юнита /etc/systemd/system/vpnbot.service ==="
 cat > /etc/systemd/system/vpnbot.service <<EOF
 [Unit]
 Description=VPN Telegram Bot
@@ -162,9 +211,9 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=$REPO_DIR
-EnvironmentFile=$REPO_DIR/.env
-ExecStart=$VENV_DIR/bin/python $REPO_DIR/bot.py
+WorkingDirectory=/root
+EnvironmentFile=/root/.env
+ExecStart=/root/venv/bin/python /root/bot.py
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
@@ -173,16 +222,16 @@ Environment=PYTHONUNBUFFERED=1
 WantedBy=multi-user.target
 EOF
 
-echo "  Юнит создан: /etc/systemd/system/vpnbot.service"
+echo "  Юнит записан: /etc/systemd/system/vpnbot.service"
 
-### 10) Перезагружаем daemon, включаем автозапуск и стартуем службу
+### 11) Перезагрузка demon, автозапуск, старт службы
 echo
-echo "Перезагружаем systemd-daemon, включаем автозапуск и запускаем vpnbot.service..."
+echo "Перезагружаем systemd и запускаем vpnbot.service..."
 systemctl daemon-reload
 systemctl enable vpnbot.service
 systemctl restart vpnbot.service
 
-### 11) Завершающее сообщение и инструкции
+### 12) Итоговое сообщение
 echo
 echo "=============================================="
 echo "Установка завершена! Бот запущен как vpnbot.service."
@@ -193,9 +242,11 @@ echo "  ● Перезапустить бота:   systemctl restart vpnbot.serv
 echo "  ● Смотреть логи:        journalctl -u vpnbot -f"
 echo
 echo "Основные пути и параметры:"
-echo "  ● Репозиторий:          $REPO_DIR"
-echo "  ● Виртуальное окружение: $VENV_DIR"
-echo "  ● Файл .env:            $REPO_DIR/.env"
+echo "  ● /root/antizapret  — содержимое папки antizapret из репо"
+echo "  ● /etc/openvpn     — содержимое папки etc/openvpn из репо"
+echo "  ● /root            — содержимое папки root (bot.py, client.sh и т. д.)"
+echo "  ● Виртуальное окружение:  /root/venv"
+echo "  ● Файл с переменными:     /root/.env"
 echo "       • BOT_TOKEN    = $BOT_TOKEN"
 echo "       • ADMIN_ID     = $ADMIN_ID"
 echo "       • FILEVPN_NAME = $FILEVPN_NAME"
