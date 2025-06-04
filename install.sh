@@ -1,21 +1,19 @@
 #!/bin/bash
 #
 # Установочный скрипт для VPN-бота (TG-Bot-OpenVPN-Antizapret)
-# Версия: 2.8 — после замены ${FILEVPN_NAME} приводим файлы в UTF-8
+# Версия: 2.8.1 — убрана попытка ставить «iconv» (он уже есть в libc), дальше сохраняем файлы в UTF-8
 # и даём всем скопированным файлам права 777
 #
 # Что делает этот скрипт:
-# 1) Проверяет и при необходимости устанавливает git, wget, curl, python3-venv, python3-pip, iconv
+# 1) Проверяет и при необходимости устанавливает git, wget, curl, python3-venv, python3-pip
 # 2) Запрашивает BOT_TOKEN, ADMIN_ID и FILEVPN_NAME, сохраняет их в /root/.env (UTF-8)
 # 3) Клонирует репозиторий во временную папку /tmp/antizapret-install и сбрасывает локальные правки
 # 4) Копирует из временного клона:
-#      • antizapret/ → /root/antizapret/     (перезапись только файлов из репо)
-#      • etc/openvpn/ → /etc/openvpn/       (перезапись только файлов из репо)
-#      • root/ → /root/                     (перезапись только файлов из репо)
-# 5) Заменяет "${FILEVPN_NAME}" и "$FILEVPN_NAME" только в:
-#      • /root/antizapret/** (кроме client/openvpn/vpn/**), приводя результат в UTF-8
-#      • /etc/openvpn/**, приводя результат в UTF-8
-#      • /root/bot.py и /root/client.sh (если есть), приводя результат в UTF-8
+#      • antizapret/ → /root/antizapret/     (перезапись без удаления остального)
+#      • etc/openvpn/ → /etc/openvpn/       (перезапись без удаления остального)
+#      • root/ → /root/                     (перезапись без удаления остального)
+# 5) Заменяет "${FILEVPN_NAME}" и "$FILEVPN_NAME" только в нужных файлах,
+#    после каждой замены конвертируя результат в UTF-8
 # 6) Принудительно пересоздаёт виртуальное окружение /root/venv и устанавливает зависимости из /root/requirements.txt
 # 7) Даёт всем скопированным файлам права 777
 # 8) Создаёт systemd-юнит vpnbot.service, включает автозапуск и запускает службу
@@ -23,22 +21,22 @@
 
 set -e
 
-### 0) Проверка, что скрипт запущен под root
+### 0) Убедимся, что скрипт запущен под root
 if [ "$EUID" -ne 0 ]; then
-  echo "Ошибка: этот скрипт нужно запустить от root."
+  echo "Ошибка: скрипт нужно запускать от root."
   exit 1
 fi
 
 echo "=============================================="
-echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.8"
+echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.8.1"
 echo "=============================================="
 echo
 
-### 1) Установка системных пакетов (git, wget, curl, python3-venv, python3-pip, iconv)
+### 1) Установка системных пакетов (git, wget, curl, python3-venv, python3-pip)
 echo "=== Шаг 1: Установка системных пакетов ==="
 apt update -qq
 
-REQUIRED_PKG=("git" "wget" "curl" "python3-venv" "python3-pip" "iconv")
+REQUIRED_PKG=("git" "wget" "curl" "python3-venv" "python3-pip")
 for pkg in "${REQUIRED_PKG[@]}"; do
   if ! dpkg -s "$pkg" &>/dev/null; then
     echo "  • Устанавливаем: $pkg"
@@ -67,7 +65,7 @@ if [ -z "$ADMIN_ID" ]; then
 fi
 
 echo
-read -p "Введите базовое имя для VPN-файлов (FILEVPN_NAME), например: MyVPN: " FILEVPN_NAME
+read -p "Введите название для VPN-файлов (FILEVPN_NAME), например: MyVPN: " FILEVPN_NAME
 FILEVPN_NAME="$(echo "$FILEVPN_NAME" | xargs)"
 if [ -z "$FILEVPN_NAME" ]; then
   echo "Ошибка: FILEVPN_NAME не может быть пустым."
@@ -88,7 +86,7 @@ BOT_TOKEN=$BOT_TOKEN
 ADMIN_ID=$ADMIN_ID
 FILEVPN_NAME=$FILEVPN_NAME
 EOF
-# Убедимся, что файл в UTF-8:
+# Убедимся, что файл сохранён в UTF-8
 iconv -f utf-8 -t utf-8 "/root/.env" -o "/root/.env.tmp" && mv "/root/.env.tmp" "/root/.env"
 echo "  Файл /root/.env записан (UTF-8)."
 echo
@@ -114,81 +112,79 @@ git fetch origin "$BRANCH"
 git reset --hard "origin/$BRANCH"
 echo
 
-### 5) Копирование подпапок в целевые директории (перезапись только файлов из репо)
+### 5) Копирование подпапок в целевые директории (перезапись без удаления остального)
 echo "=== Шаг 5: Копирование файлов из временного клона ==="
 
 # 5.1) antizapret → /root/antizapret
 SRC_ANTIZAPRET="$TMP_DIR/antizapret"
 DST_ANTIZAPRET="/root/antizapret"
 if [ -d "$SRC_ANTIZAPRET" ]; then
-  echo "  Копируем файлы из '$SRC_ANTIZAPRET' → '$DST_ANTIZAPRET' (перезапись без удаления остального)"
+  echo "  Копируем '$SRC_ANTIZAPRET' → '$DST_ANTIZAPRET'"
   mkdir -p "$DST_ANTIZAPRET"
   cp -r "$SRC_ANTIZAPRET/"* "$DST_ANTIZAPRET/"
 else
-  echo "  ⚠️  Папка '$SRC_ANTIZAPRET' не найдена — проверьте структуру репозитория."
+  echo "  ⚠️  Папка '$SRC_ANTIZAPRET' не найдена."
 fi
 
 # 5.2) etc/openvpn → /etc/openvpn
 SRC_OPENVPN="$TMP_DIR/etc/openvpn"
 DST_OPENVPN="/etc/openvpn"
 if [ -d "$SRC_OPENVPN" ]; then
-  echo "  Копируем файлы из '$SRC_OPENVPN' → '$DST_OPENVPN' (перезапись без удаления остального)"
+  echo "  Копируем '$SRC_OPENVPN' → '$DST_OPENVPN'"
   mkdir -p "$DST_OPENVPN"
   cp -r "$SRC_OPENVPN/"* "$DST_OPENVPN/"
 else
-  echo "  ⚠️  Папка '$SRC_OPENVPN' не найдена — проверьте структуру."
+  echo "  ⚠️  Папка '$SRC_OPENVPN' не найдена."
 fi
 
 # 5.3) root → /root
 SRC_ROOT="$TMP_DIR/root"
 DST_ROOT="/root"
 if [ -d "$SRC_ROOT" ]; then
-  echo "  Копируем файлы из '$SRC_ROOT' → '$DST_ROOT' (перезапись без удаления остального)"
+  echo "  Копируем '$SRC_ROOT' → '$DST_ROOT'"
   cp -r "$SRC_ROOT/"* "$DST_ROOT/"
 else
-  echo "  ⚠️  Папка '$SRC_ROOT' не найдена — проверьте структуру репозитория."
+  echo "  ⚠️  Папка '$SRC_ROOT' не найдена."
 fi
 
 echo "Копирование завершено."
 echo
 
-### 6) Замена плейсхолдера "${FILEVPN_NAME}" и "$FILEVPN_NAME", приводим к UTF-8
-echo "=== Шаг 6: Замена \"\${FILEVPN_NAME}\" и \"\$FILEVPN_NAME\" → \"$FILEVPN_NAME\" (с конвертацией в UTF-8) ==="
+### 6) Замена "${FILEVPN_NAME}" и "$FILEVPN_NAME" с последующей конвертацией в UTF-8
+echo "=== Шаг 6: Замена \"\${FILEVPN_NAME}\" и \"\$FILEVPN_NAME\" → \"$FILEVPN_NAME\" (UTF-8) ==="
 
-# Функция: после sed заменяем иконвтом в UTF-8
+# Функция перекодировки в UTF-8
 recode_to_utf8() {
   local file="$1"
-  # Перепроверяем, чтобы был обычный файл
-  if [ ! -f "$file" ]; then
-    return
+  if [ -f "$file" ]; then
+    iconv -f utf-8 -t utf-8 "$file" -o "${file}.tmp" && mv "${file}.tmp" "$file"
   fi
-  iconv -f utf-8 -t utf-8 "$file" -o "${file}.tmp" && mv "${file}.tmp" "$file"
 }
 
 # 6.1) В /root/antizapret, кроме client/openvpn/vpn/**
 grep -RIl --exclude-dir="client/openvpn/vpn" '\${FILEVPN_NAME}' /root/antizapret 2>/dev/null | while IFS= read -r f; do
   sed -i "s|\${FILEVPN_NAME}|${FILEVPN_NAME}|g" "$f"
   recode_to_utf8 "$f"
-  echo "  Заменено \${FILEVPN_NAME} и перекодировано в UTF-8: $f"
+  echo "  Заменено \${FILEVPN_NAME} и UTF-8: $f"
 done || true
 
 grep -RIl --exclude-dir="client/openvpn/vpn" '\$FILEVPN_NAME' /root/antizapret 2>/dev/null | while IFS= read -r f; do
   sed -i "s|\$FILEVPN_NAME|${FILEVPN_NAME}|g" "$f"
   recode_to_utf8 "$f"
-  echo "  Заменено \$FILEVPN_NAME и перекодировано в UTF-8: $f"
+  echo "  Заменено \$FILEVPN_NAME и UTF-8: $f"
 done || true
 
 # 6.2) В /etc/openvpn
 grep -RIl '\${FILEVPN_NAME}' /etc/openvpn 2>/dev/null | while IFS= read -r f; do
   sed -i "s|\${FILEVPN_NAME}|${FILEVPN_NAME}|g" "$f"
   recode_to_utf8 "$f"
-  echo "  Заменено \${FILEVPN_NAME} и перекодировано в UTF-8: $f"
+  echo "  Заменено \${FILEVPN_NAME} и UTF-8: $f"
 done || true
 
 grep -RIl '\$FILEVPN_NAME' /etc/openvpn 2>/dev/null | while IFS= read -r f; do
   sed -i "s|\$FILEVPN_NAME|${FILEVPN_NAME}|g" "$f"
   recode_to_utf8 "$f"
-  echo "  Заменено \$FILEVPN_NAME и перекодировано в UTF-8: $f"
+  echo "  Заменено \$FILEVPN_NAME и UTF-8: $f"
 done || true
 
 # 6.3) В /root/bot.py и /root/client.sh (если есть)
@@ -197,20 +193,20 @@ for f in /root/bot.py /root/client.sh; do
     if grep -q '\${FILEVPN_NAME}' "$f"; then
       sed -i "s|\${FILEVPN_NAME}|${FILEVPN_NAME}|g" "$f"
       recode_to_utf8 "$f"
-      echo "  Заменено \${FILEVPN_NAME} и перекодировано в UTF-8: $f"
+      echo "  Заменено \${FILEVPN_NAME} и UTF-8: $f"
     fi
     if grep -q '\$FILEVPN_NAME' "$f"; then
       sed -i "s|\$FILEVPN_NAME|${FILEVPN_NAME}|g" "$f"
       recode_to_utf8 "$f"
-      echo "  Заменено \$FILEVPN_NAME и перекодировано в UTF-8: $f"
+      echo "  Заменено \$FILEVPN_NAME и UTF-8: $f"
     fi
   fi
 done
 
 echo
 
-### 7) Принудительное пересоздание виртуального окружения и установка зависимостей
-echo "=== Шаг 7: Принудительное создание виртуального окружения и установка зависимостей ==="
+### 7) Пересоздание виртуального окружения и установка зависимостей
+echo "=== Шаг 7: Пересоздание виртуального окружения и установка зависимостей ==="
 VENV_DIR="/root/venv"
 
 if [ -d "$VENV_DIR" ]; then
@@ -233,9 +229,8 @@ deactivate
 
 echo
 
-### 8) Даем всем скопированным файлам права 777
+### 8) Выставляем права 777 всем скопированным файлам
 echo "=== Шаг 8: Даем полные права (777) всем скопированным файлам ==="
-
 if [ -d "/root/antizapret" ]; then
   chmod -R 777 "/root/antizapret"
   echo "  Права 777 выставлены на /root/antizapret"
