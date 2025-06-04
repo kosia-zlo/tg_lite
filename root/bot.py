@@ -174,7 +174,9 @@ def is_pending(user_id):
 
 
 load_dotenv()
-
+FILEVPN_NAME = os.getenv("FILEVPN_NAME")
+if not FILEVPN_NAME:
+    raise RuntimeError("FILEVPN_NAME не задан в .env")
 # Конфигурация
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
@@ -734,9 +736,9 @@ async def download_wg_config(callback: types.CallbackQuery):
     username = callback.from_user.username or "Без username"
 
     if wg_type == "vpn":
-        file_path = f"/root/antizapret/client/wireguard/vpn/${FILEVPN_NAME} - Обычный VPN -{client_name}.conf"
+        file_path = f"/root/antizapret/client/wireguard/vpn/{FILEVPN_NAME} - Обычный VPN -{client_name}.conf"
     else:
-        file_path = f"/root/antizapret/client/wireguard/antizapret/${FILEVPN_NAME} -{client_name}.conf"
+        file_path = f"/root/antizapret/client/wireguard/antizapret/{FILEVPN_NAME} -{client_name}.conf"
 
     # Генерируем, если нет файла
     if not os.path.exists(file_path):
@@ -775,9 +777,9 @@ async def download_wg_config(callback: types.CallbackQuery):
     username = callback.from_user.username or "Без username"
 
     if wg_type == "vpn":
-        file_path = f"/root/antizapret/client/wireguard/vpn/${FILEVPN_NAME} - Обычный VPN -{client_name}.conf"
+        file_path = f"/root/antizapret/client/wireguard/vpn/{FILEVPN_NAME} - Обычный VPN -{client_name}.conf"
     else:
-        file_path = f"/root/antizapret/client/wireguard/antizapret/${FILEVPN_NAME} -{client_name}.conf"
+        file_path = f"/root/antizapret/client/wireguard/antizapret/{FILEVPN_NAME} -{client_name}.conf"
 
     # Генерируем если нет файла
     if not os.path.exists(file_path):
@@ -1303,9 +1305,9 @@ async def download_amnezia_config(callback: types.CallbackQuery):
     username = callback.from_user.username or "Без username"
 
     if am_type == "vpn":
-        file_path = f"/root/antizapret/client/amneziawg/vpn/${FILEVPN_NAME} - Обычный VPN -{client_name}.conf"
+        file_path = f"/root/antizapret/client/amneziawg/vpn/{FILEVPN_NAME} - Обычный VPN -{client_name}.conf"
     else:
-        file_path = f"/root/antizapret/client/amneziawg/antizapret/${FILEVPN_NAME} -{client_name}.conf"
+        file_path = f"/root/antizapret/client/amneziawg/antizapret/{FILEVPN_NAME} -{client_name}.conf"
 
     if not os.path.exists(file_path):
         subprocess.run(['/root/antizapret/client.sh', '4', client_name], check=True)
@@ -2538,9 +2540,9 @@ async def select_openvpn_config(callback: types.CallbackQuery):
 
 def get_openvpn_filename(client_name, config_type):
     if config_type == "vpn":
-        return f"${FILEVPN_NAME} - Обычный VPN - {client_name}.ovpn"
+        return f"{FILEVPN_NAME} - Обычный VPN - {client_name}.ovpn"
     elif config_type == "antizapret":
-        return f"${FILEVPN_NAME} - {client_name}.ovpn"
+        return f"{FILEVPN_NAME} - {client_name}.ovpn"
 
 
 # Вывод конфига для OpenVPN
@@ -2560,10 +2562,10 @@ async def download_openvpn_config(callback: types.CallbackQuery):
 
     # Определяем пути
     if config_type == "vpn":
-        file_name = f"${FILEVPN_NAME} - Обычный VPN - {client_name}.ovpn"
+        file_name = f"{FILEVPN_NAME} - Обычный VPN - {client_name}.ovpn"
         base_path = "/root/antizapret/client/openvpn/vpn/"
     else:
-        file_name = f"${FILEVPN_NAME} - {client_name}.ovpn"
+        file_name = f"{FILEVPN_NAME} - {client_name}.ovpn"
         base_path = "/root/antizapret/client/openvpn/antizapret/"
 
     file_path = os.path.join(base_path, file_name)
