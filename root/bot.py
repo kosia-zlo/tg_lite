@@ -947,6 +947,7 @@ async def process_manual_user_id(message: types.Message, state: FSMContext):
     await state.update_data(manual_add_msg_id=msg2.message_id)
     await state.set_state(VPNSetup.entering_client_name_manual)
 
+
 @dp.message(VPNSetup.entering_client_name_manual)
 async def process_manual_client_name(message: types.Message, state: FSMContext):
     client_name = message.text.strip()
@@ -966,15 +967,25 @@ async def process_manual_client_name(message: types.Message, state: FSMContext):
         await state.clear()
         await delete_last_menus(message.from_user.id)
         stats = get_server_info()
-        await show_menu(message.from_user.id, stats + "\n<b>Главное меню:</b>", create_main_menu())
+        await show_menu(
+            message.from_user.id,
+            stats + "\n<b>Главное меню:</b>",
+            create_main_menu()
+        )
         return
 
     # 3) проверяем, что имя подходит под шаблон [A-Za-z0-9_-]{1,32}
     if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", client_name):
-        warn = await message.answer("❌ Некорректное имя профиля! Используйте латиницу, цифры, _ или -. Не больше 32 символов.", reply_markup=cancel_markup)
+        warn = await message.answer(
+            "❌ Некорректное имя профиля! Используйте латиницу, цифры, _ или -. Не больше 32 символов.",
+            reply_markup=cancel_markup
+        )
         await asyncio.sleep(1.5)
-        try: await warn.delete()
-        except: pass
+        try:
+            await warn.delete()
+        except:
+            pass
+
         # повторно запросим
         msg2 = await bot.send_message(
             message.chat.id,
@@ -988,7 +999,10 @@ async def process_manual_client_name(message: types.Message, state: FSMContext):
     result = await execute_script("1", client_name, "30")
     if result["returncode"] != 0:
         # Если что-то пошло не так, сообщаем админу
-        await message.answer(f"❌ Ошибка при создании профиля <code>{client_name}</code>: {result['stderr']}", parse_mode="HTML")
+        await message.answer(
+            f"❌ Ошибка при создании профиля <code>{client_name}</code>: {result['stderr']}",
+            parse_mode="HTML"
+        )
         await state.clear()
         return
 
@@ -999,7 +1013,7 @@ async def process_manual_client_name(message: types.Message, state: FSMContext):
     approve_user(manual_user_id)
     save_user_id(manual_user_id)
 
-    # 7) Уведомляем пользователя, что он получил VPN (если он уже в чате — дойдёт немедленно; 
+    # 7) Уведомляем пользователя, что он получил VPN (если он уже в чате — дойдёт немедленно;
     #    если он зайдёт позже, при /start будет определён как approved)
     try:
         await safe_send_message(
@@ -1009,14 +1023,27 @@ async def process_manual_client_name(message: types.Message, state: FSMContext):
             parse_mode="HTML",
             reply_markup=create_user_menu(client_name, user_id=manual_user_id)
         )
-    except Exception as e:
-        # Вполне нормально, если юзер ещё не писал боту (чата нет) — в этом случае safe_send_message просто проигнорирует отправку.
+    except Exception:
+        # Вполне нормально, если юзер ещё не писал боту — safe_send_message проигнорирует.
         pass
 
-    # 8) Сообщаем админу об успешном создании и возвращаем в главное меню
-    await message.answer("✅ Клиент успешно создан и «уппрувлен»! Пользователь может зайти в бот и сразу получить конфиги.", reply_markup=ReplyKeyboardRemove())
+    # 8) Отправляем временное сообщение админу и удаляем его через 1 секунду
+    temp = await message.answer(
+        "✅ Клиент успешно создан и подтверждён сразу! Пользователь может зайти в бот и сразу получить конфиги."
+    )
+    await asyncio.sleep(1)
+    try:
+        await temp.delete()
+    except Exception:
+        pass
+
+    # 9) Теперь показываем главное меню
     stats = get_server_info()
-    await show_menu(message.from_user.id, stats + "\n<b>Главное меню:</b>", create_main_menu())
+    await show_menu(
+        message.from_user.id,
+        stats + "\n<b>Главное меню:</b>",
+        create_main_menu()
+    )
 
     await state.clear()
 
