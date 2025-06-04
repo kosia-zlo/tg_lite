@@ -1,17 +1,18 @@
 #!/bin/bash
 #
 # Установочный скрипт для VPN-бота (TG-Bot-OpenVPN-Antizapret)
-# Версия: 2.5 — перезаписывает только файлы из репо, не трогая остальное, и даёт всем скопированным файлам права 777
+# Версия: 2.5.1 — дополнительно заменяет "$FILEVPN_NAME" без фигурных скобок
+# и даёт всем скопированным файлам права 777
 #
 # Что делает этот скрипт:
 # 1) Проверяет и при необходимости устанавливает git, wget, curl, python3-venv, python3-pip
 # 2) Спрашивает BOT_TOKEN, ADMIN_ID и FILEVPN_NAME, сохраняет их в /root/.env
 # 3) Клонирует репозиторий во временную папку /tmp/antizapret-install и сбрасывает локальные правки
 # 4) Копирует подпапки из временного клона:
-#      • содержимое antizapret/ → /root/antizapret/ (перезаписывает файлы из репо, остальные остаются)
-#      • содержимое etc/openvpn/ → /etc/openvpn/ (перезаписывает файлы из репо)
-#      • содержимое root/ → /root/ (перезаписывает файлы из репо)
-# 5) Во всех скопированных файлах заменяет "${FILEVPN_NAME}" на введённое имя (кроме install.sh)
+#      • содержимое antizapret/ → /root/antizapret/  (перезапись только файлов, не трогая остальное)
+#      • содержимое etc/openvpn/ → /etc/openvpn/    (перезапись только файлов)
+#      • содержимое root/ → /root/                  (перезапись только файлов)
+# 5) Во всех скопированных файлах заменяет и "${FILEVPN_NAME}", и "$FILEVPN_NAME" на введённое имя (кроме install.sh)
 # 6) Принудительно пересоздаёт виртуальное окружение /root/venv и устанавливает зависимости из /root/requirements.txt
 # 7) Даёт всем скопированным файлам права 777
 # 8) Создаёт systemd-юнит vpnbot.service, включает автозапуск и запускает службу
@@ -26,12 +27,12 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "=============================================="
-echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.5"
+echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.5.1"
 echo "=============================================="
 echo
 
-### 1) Установка системных пакетов
-echo "=== Шаг 1: Установка системных пакетов (git, wget, curl, python3-venv, python3-pip) ==="
+### 1) Установка системных пакетов (git, wget, curl, python3-venv, python3-pip)
+echo "=== Шаг 1: Установка системных пакетов ==="
 apt update -qq
 
 REQUIRED_PKG=("git" "wget" "curl" "python3-venv" "python3-pip")
@@ -111,33 +112,33 @@ echo
 ### 5) Копирование подпапок в целевые директории (перезаписывая только файлы из репо)
 echo "=== Шаг 5: Копирование файлов из временного клона ==="
 
-# 5.1) antizapret → /root/antizapret (перезаписываем только файлы из репо)
+# 5.1) antizapret → /root/antizapret
 SRC_ANTIZAPRET="$TMP_DIR/antizapret"
 DST_ANTIZAPRET="/root/antizapret"
 if [ -d "$SRC_ANTIZAPRET" ]; then
-  echo "  Копируем файлы из '$SRC_ANTIZAPRET' → '$DST_ANTIZAPRET' (перезапись без удаления остального)"
+  echo "  Копируем файлы из '$SRC_ANTIZAPRET' → '$DST_ANTIZAPRET' (перезапись только файлов из репо)"
   mkdir -p "$DST_ANTIZAPRET"
   cp -r "$SRC_ANTIZAPRET/"* "$DST_ANTIZAPRET/"
 else
   echo "  ⚠️  Папка '$SRC_ANTIZAPRET' не найдена — проверьте структуру репозитория."
 fi
 
-# 5.2) etc/openvpn → /etc/openvpn (перезаписываем только файлы из репо)
+# 5.2) etc/openvpn → /etc/openvpn
 SRC_OPENVPN="$TMP_DIR/etc/openvpn"
 DST_OPENVPN="/etc/openvpn"
 if [ -d "$SRC_OPENVPN" ]; then
-  echo "  Копируем файлы из '$SRC_OPENVPN' → '$DST_OPENVPN' (перезапись)"
+  echo "  Копируем файлы из '$SRC_OPENVPN' → '$DST_OPENVPN' (перезапись только файлов из репо)"
   mkdir -p "$DST_OPENVPN"
   cp -r "$SRC_OPENVPN/"* "$DST_OPENVPN/"
 else
   echo "  ⚠️  Папка '$SRC_OPENVPN' не найдена — проверьте структуру."
 fi
 
-# 5.3) root → /root (бот и скрипты, включая client.sh) — перезапись из репо
+# 5.3) root → /root  (бот, client.sh, requirements.txt и т.д.)
 SRC_ROOT="$TMP_DIR/root"
 DST_ROOT="/root"
 if [ -d "$SRC_ROOT" ]; then
-  echo "  Копируем файлы из '$SRC_ROOT' → '$DST_ROOT' (перезапись)"
+  echo "  Копируем файлы из '$SRC_ROOT' → '$DST_ROOT' (перезапись только файлов из репо)"
   cp -r "$SRC_ROOT/"* "$DST_ROOT/"
 else
   echo "  ⚠️  Папка '$SRC_ROOT' не найдена — проверьте структуру репозитория."
@@ -146,20 +147,23 @@ fi
 echo "Копирование завершено."
 echo
 
-### 6) Замена плейсхолдера "${FILEVPN_NAME}"
-echo "=== Шаг 6: Ищем и заменяем literal \"\${FILEVPN_NAME}\" → \"$FILEVPN_NAME\" ==="
+### 6) Замена плейсхолдера "${FILEVPN_NAME}" и "$FILEVPN_NAME"
+echo "=== Шаг 6: Ищем и заменяем literal \"\${FILEVPN_NAME}\" и \"\$FILEVPN_NAME\" → \"$FILEVPN_NAME\" ==="
 
 TARGET_DIRS=("/root/antizapret" "/etc/openvpn" "/root")
 
 for DIR in "${TARGET_DIRS[@]}"; do
   if [ -d "$DIR" ]; then
-    FILES=$(grep -RIl '\${FILEVPN_NAME}' "$DIR" || true)
+    FILES=$(grep -RIlE '\${FILEVPN_NAME}|\$FILEVPN_NAME' "$DIR" || true)
     for f in $FILES; do
       # Исключаем install.sh в /root, если он скопировался
       if [[ "$(basename "$f")" == "install.sh" ]]; then
         continue
       fi
+      # Сначала заменяем "${FILEVPN_NAME}"
       sed -i "s|\${FILEVPN_NAME}|${FILEVPN_NAME}|g" "$f"
+      # Потом заменяем "$FILEVPN_NAME"
+      sed -i "s|\$FILEVPN_NAME|${FILEVPN_NAME}|g" "$f"
       echo "  Заменено в: $f"
     done
   fi
@@ -171,7 +175,6 @@ echo
 echo "=== Шаг 7: (ПРИНУДИТЕЛЬНО) создание виртуального окружения и установка зависимостей ==="
 VENV_DIR="/root/venv"
 
-# Если папка venv существует, удаляем её целиком
 if [ -d "$VENV_DIR" ]; then
   echo "  Удаляем существующее виртуальное окружение: rm -rf $VENV_DIR"
   rm -rf "$VENV_DIR"
@@ -207,7 +210,7 @@ if [ -d "/etc/openvpn" ]; then
   echo "  Права 777 выставлены на /etc/openvpn"
 fi
 
-# Все файлы, скопированные из SRC_ROOT (имена элементов)
+# Все файлы, скопированные из SRC_ROOT (root/*)
 if [ -d "$SRC_ROOT" ]; then
   for item in "$SRC_ROOT"/*; do
     base=$(basename "$item")
