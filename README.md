@@ -18,71 +18,13 @@
 - Одобренные пользователи хранятся в папке root/approved_users.txt
 ---
 
-Опыта ноль, делал через GPT 4.5. Ошибок нет.
-
-Тут я опишу что и как и куда добавить
-
----
-- Файл .env в папку root/   "ВСТАВЬ СВОЕ"
-- Файл bot.py в папку root/ "ВСТАВЬ СВОЕ"
-- Свое я там убрал и заменил текст на :exclamation::exclamation::exclamation:"ВСТАВЬ СВОЕ":exclamation::exclamation::exclamation: просто поиском можешь найти эти строки и вставить туда всё свое
-- antizapret.conf в папку /etc/openvpn/client/templates :exclamation::exclamation::exclamation:"ВСТАВЬ СВОЕ":exclamation::exclamation::exclamation:
-- Строка 15 Ваше навание в клиенте
-- vpn.conf в папку /etc/openvpn/client/templates :exclamation::exclamation::exclamation:"ВСТАВЬ СВОЕ":exclamation::exclamation::exclamation:
-- Строка 15 Ваше навание в клиенте
-- client.sh в папку /root/antizapret/ замени :exclamation::exclamation::exclamation:"ВСТАВЬ СВОЕ":exclamation::exclamation::exclamation:
-- db.py в папку /root/ Не нужно ние менять
-- renew_cert.sh в папку /etc/openvpn/easyrsa3 Не нужно ниче менять
----
-
-
-
-А теперь установка. Изменяете, скидываете все файлы куда я расписал. Далее
-
-
-Устанавливаем EASY-RSA в папку cd /etc/openvpn/easyrsa3 и даем права
+Установка простая/ Важно! Перед установкой обязательно установите https://github.com/GubernievS/AntiZapret-VPN
 ```
-cd /etc/openvpn/easyrsa3
-wget https://github.com/OpenVPN/easy-rsa/releases/download/v3.1.7/EasyRSA-3.1.7.tgz
-tar xzf EasyRSA-3.1.7.tgz --strip-components=1
-chmod +x ./easyrsa
-```
-
-Запуск бота. Будут скорее всего ошибки потому что у вас могут быть установленны не все компачи. Но там уже просто их доустановите 
-
-Создаем сервисный файл
-```
-sudo nano /etc/systemd/system/vpnbot.service
-```
-Вставляем туда 
-```
-[Unit]
-Description=VPN Telegram Bot
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/root
-ExecStart=/root/venv/bin/python /root/bot.py
-Restart=on-failure
-RestartSec=5
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-```
-Сохраняем
-
-Презегрузи сервис и запускай
-```
-sudo systemctl daemon-reload
-sudo systemctl enable vpnbot
-sudo systemctl start vpnbot
-sudo systemctl status vpnbot
+bash <(wget --no-hsts -qO- https://raw.githubusercontent.com/VATAKATru61/TG-Bot-OpenVPN-Antizapret/main/install.sh)
 ```
 
 
+Команды:
 Запуск бота
 ```
 sudo systemctl start vpnbot
