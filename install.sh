@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Установочный скрипт для VPN-бота (TG-Bot-OpenVPN-Antizapret)
-# Версия: 2.8.3 — полностью убрали установку iconv, оставили конвертацию UTF-8
+# Версия: 2.8.4 — исправлена опечатка в запуске systemctl, удалена попытка ставить iconv
 # и даём всем скопированным файлам права 777.
 #
 # Что делает этот скрипт:
@@ -21,18 +21,18 @@
 
 set -e
 
-### 0) Проверка, что скрипт запущен под root
+### 0) Проверяем, что скрипт запущен от root
 if [ "$EUID" -ne 0 ]; then
   echo "Ошибка: скрипт нужно запускать от root."
   exit 1
 fi
 
 echo "=============================================="
-echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.8.3"
+echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.8.4"
 echo "=============================================="
 echo
 
-### 1) Установка системных пакетов (git, wget, curl, python3-venv, python3-pip)
+### 1) Системные пакеты: git, wget, curl, python3-venv, python3-pip
 echo "=== Шаг 1: Установка системных пакетов ==="
 apt update -qq
 
@@ -48,7 +48,7 @@ done
 
 echo
 
-### 2) Запрос BOT_TOKEN, ADMIN_ID и FILEVPN_NAME
+### 2) Запрашиваем BOT_TOKEN, ADMIN_ID и FILEVPN_NAME
 echo "=== Шаг 2: Настройка BOT_TOKEN, ADMIN_ID и FILEVPN_NAME ==="
 read -p "Введите BOT_TOKEN (токен из BotFather): " BOT_TOKEN
 BOT_TOKEN="$(echo "$BOT_TOKEN" | xargs)"
@@ -57,7 +57,7 @@ if [ -z "$BOT_TOKEN" ]; then
   exit 1
 fi
 
-read -p "Введите ADMIN_ID (ваш Telegram User ID): " ADMIN_ID
+read -p "Введите ADMIN_ID (Telegram User ID): " ADMIN_ID
 ADMIN_ID="$(echo "$ADMIN_ID" | xargs)"
 if [ -z "$ADMIN_ID" ]; then
   echo "Ошибка: ADMIN_ID не может быть пустым."
@@ -79,14 +79,14 @@ echo "  ADMIN_ID     = \"$ADMIN_ID\""
 echo "  FILEVPN_NAME = \"$FILEVPN_NAME\""
 echo
 
-### 3) Сохранение переменных в /root/.env (UTF-8 без BOM)
+### 3) Сохраняем переменные в /root/.env (UTF-8 без BOM)
 echo "=== Шаг 3: Запись переменных в /root/.env ==="
 cat > "/root/.env" <<EOF
 BOT_TOKEN=$BOT_TOKEN
 ADMIN_ID=$ADMIN_ID
 FILEVPN_NAME=$FILEVPN_NAME
 EOF
-# Убедимся, что файл UTF-8 (переконвертирует в UTF-8, если была другая кодировка)
+# Гарантируем UTF-8 (конвертация через iconv при необходимости)
 iconv -f utf-8 -t utf-8 "/root/.env" -o "/root/.env.tmp" && mv "/root/.env.tmp" "/root/.env"
 echo "  Файл /root/.env записан (UTF-8)."
 echo
@@ -150,7 +150,7 @@ fi
 echo "Копирование завершено."
 echo
 
-### 6) Замена "${FILEVPN_NAME}" и "$FILEVPN_NAME", затем приводим файлы в UTF-8
+### 6) Замена "${FILEVPN_NAME}" и "$FILEVPN_NAME" с конвертацией в UTF-8
 echo "=== Шаг 6: Замена \"\${FILEVPN_NAME}\" и \"\$FILEVPN_NAME\" → \"$FILEVPN_NAME\" (UTF-8) ==="
 
 # Функция для конвертации в UTF-8
@@ -282,7 +282,7 @@ echo
 echo "=== Шаг 10: Перезагрузка systemd и запуск vpnbot.service ==="
 systemctl daemon-reload
 systemctl enable vpnbot.service
-systemctl.restart vpnbot.service
+systemctl restart vpnbot.service
 
 echo
 
