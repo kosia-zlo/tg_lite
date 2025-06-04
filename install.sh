@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Установочный скрипт для VPN-бота (TG-Bot-OpenVPN-Antizapret)
-# Версия: 2.5.2 — надежная замена плейсхолдера в путях с пробелами
+# Версия: 2.5.3 — надёжная замена плейсхолдера с учётом пробелов
 # и даёт всем скопированным файлам права 777
 #
 # Что делает этот скрипт:
@@ -12,8 +12,8 @@
 #      • содержимое antizapret/ → /root/antizapret/
 #      • содержимое etc/openvpn/ → /etc/openvpn/
 #      • содержимое root/ → /root/
-#    (перезаписывает файлы из репо, не трогая остальные)
-# 5) Во всех скопированных файлах заменяет и "${FILEVPN_NAME}", и "$FILEVPN_NAME" на введённое имя (нейтрализует пробелы)
+#    (перезаписывает только файлы из репо, остальные остаются)
+# 5) Во всех скопированных файлах заменяет "${FILEVPN_NAME}" и "$FILEVPN_NAME" на введённое имя
 # 6) Принудительно пересоздаёт виртуальное окружение /root/venv и устанавливает зависимости из /root/requirements.txt
 # 7) Даёт всем скопированным файлам права 777
 # 8) Создаёт systemd-юнит vpnbot.service, включает автозапуск и запускает службу
@@ -28,7 +28,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "=============================================="
-echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.5.2"
+echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.5.3"
 echo "=============================================="
 echo
 
@@ -148,22 +148,23 @@ fi
 echo "Копирование завершено."
 echo
 
-### 6) Замена плейсхолдера "${FILEVPN_NAME}" и "$FILEVPN_NAME" (с учётом пробелов)
+### 6) Замена плейсхолдера "${FILEVPN_NAME}" и "$FILEVPN_NAME"
 echo "=== Шаг 6: Ищем и заменяем literal \"\${FILEVPN_NAME}\" и \"\$FILEVPN_NAME\" → \"$FILEVPN_NAME\" ==="
 
 TARGET_DIRS=("/root/antizapret" "/etc/openvpn" "/root")
 
 for DIR in "${TARGET_DIRS[@]}"; do
   if [ -d "$DIR" ]; then
-    # grep с опцией -Z выдаёт null-terminated строки.
-    # find и xargs тоже могли бы помочь, но здесь удобно взять grep -RIlZ.
-    grep -RIlZ --exclude="install.sh" -e '\${FILEVPN_NAME}' -e '\$FILEVPN_NAME' "$DIR" 2>/dev/null | \
-    while IFS= read -r -d '' f; do
-      # Сначала заменяем "${FILEVPN_NAME}"
+    # Сначала заменяем "${FILEVPN_NAME}"
+    grep -RIl --exclude="install.sh" '\${FILEVPN_NAME}' "$DIR" 2>/dev/null | while IFS= read -r f; do
       sed -i "s|\${FILEVPN_NAME}|${FILEVPN_NAME}|g" "$f"
-      # Затем заменяем "$FILEVPN_NAME"
+      echo "  Заменено \${FILEVPN_NAME} в: $f"
+    done
+
+    # Затем заменяем "$FILEVPN_NAME"
+    grep -RIl --exclude="install.sh" '\$FILEVPN_NAME' "$DIR" 2>/dev/null | while IFS= read -r f; do
       sed -i "s|\$FILEVPN_NAME|${FILEVPN_NAME}|g" "$f"
-      echo "  Заменено в: $f"
+      echo "  Заменено \$FILEVPN_NAME в: $f"
     done
   fi
 done
@@ -197,29 +198,25 @@ echo
 ### 8) Даем всем скопированным файлам права 777
 echo "=== Шаг 8: Даем полные права (777) всем скопированным файлам ==="
 
-# Все файлы и папки в /root/antizapret
 if [ -d "/root/antizapret" ]; then
   chmod -R 777 "/root/antizapret"
   echo "  Права 777 выставлены на /root/antizapret"
 fi
 
-# Все файлы и папки в /etc/openvpn
 if [ -d "/etc/openvpn" ]; then
   chmod -R 777 "/etc/openvpn"
   echo "  Права 777 выставлены на /etc/openvpn"
 fi
 
-# Все файлы, скопированные из SRC_ROOT (root/*)
 if [ -d "$SRC_ROOT" ]; then
-  while IFS= read -r -d '' item; do
-    # Берём имя относительно SRC_ROOT
-    rel="${item#$SRC_ROOT/}"
+  find "$SRC_ROOT" -type f | while IFS= read -r srcf; do
+    rel="${srcf#$SRC_ROOT/}"
     target="/root/$rel"
     if [ -e "$target" ]; then
-      chmod -R 777 "$target"
+      chmod 777 "$target"
       echo "  Права 777 выставлены на $target"
     fi
-  done < <(find "$SRC_ROOT" -print0)
+  done
 fi
 
 echo
@@ -252,7 +249,7 @@ echo
 echo "=== Шаг 10: Перезагрузка systemd и запуск vpnbot.service ==="
 systemctl daemon-reload
 systemctl enable vpnbot.service
-systemctl restart vpnbot.service
+systemctl.restart vpnbot.service
 
 echo
 
