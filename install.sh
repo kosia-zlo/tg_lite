@@ -1,16 +1,16 @@
 #!/bin/bash
 #
 # Установочный скрипт для VPN-бота (TG-Bot-OpenVPN-Antizapret)
-# Версия: 2.3 — принудительно пересоздаёт /root/venv, чтобы избежать ошибок
+# Версия: 2.4 — не удаляет всю папку antizapret, а лишь обновляет файлы внутри
 #
 # Что делает этот скрипт:
-# 1) Проверяет и при необходимости устанавливает git, wget, curl, python3-venv, python3-pip
+# 1) Устанавливает при необходимости git, wget, curl, python3-venv, python3-pip
 # 2) Спрашивает BOT_TOKEN, ADMIN_ID и FILEVPN_NAME, сохраняет их в /root/.env
 # 3) Клонирует репозиторий во временную папку /tmp/antizapret-install и сбрасывает локальные правки
-# 4) Копирует подпапки из временного клона:
-#      • antizapret → /root/antizapret
-#      • etc/openvpn → /etc/openvpn
-#      • root       → /root
+# 4) Копирует из временного клона:
+#      • содержимое antizapret/ → /root/antizapret/ (не стирая остальное, только перезаписывая)
+#      • содержимое etc/openvpn/ → /etc/openvpn/ (не стирая)
+#      • содержимое root/ → /root/ (не стирая, только перезаписывая)
 # 5) Во всех скопированных файлах заменяет "${FILEVPN_NAME}" на введённое имя (кроме install.sh)
 # 6) Принудительно пересоздаёт виртуальное окружение /root/venv и устанавливает зависимости из /root/requirements.txt
 # 7) Дает /root/client.sh права на исполнение (если он существует)
@@ -26,7 +26,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "=============================================="
-echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.3"
+echo "Установка VPN-бота (TG-Bot-OpenVPN-Antizapret) v2.4"
 echo "=============================================="
 echo
 
@@ -108,37 +108,36 @@ git fetch origin "$BRANCH"
 git reset --hard "origin/$BRANCH"
 echo
 
-### 5) Копирование подпапок в целевые директории
+### 5) Копирование подпапок в целевые директории (без удаления всего каталога)
 echo "=== Шаг 5: Копирование файлов из временного клона ==="
 
-# 5.1) antizapret → /root/antizapret
+# 5.1) antizapret → /root/antizapret (сохраняем старые, перезаписываем только совпадающие)
 SRC_ANTIZAPRET="$TMP_DIR/antizapret"
 DST_ANTIZAPRET="/root/antizapret"
 if [ -d "$SRC_ANTIZAPRET" ]; then
-  echo "  Копируем '$SRC_ANTIZAPRET' → '$DST_ANTIZAPRET' (с перезаписью)"
-  rm -rf "$DST_ANTIZAPRET"
+  echo "  Копируем '$SRC_ANTIZAPRET/' → '$DST_ANTIZAPRET/' (перезаписываем файлы, но не удаляем остальное)"
   mkdir -p "$DST_ANTIZAPRET"
   cp -r "$SRC_ANTIZAPRET/"* "$DST_ANTIZAPRET/"
 else
   echo "  ⚠️  Папка '$SRC_ANTIZAPRET' не найдена — проверьте структуру репозитория."
 fi
 
-# 5.2) etc/openvpn → /etc/openvpn
+# 5.2) etc/openvpn → /etc/openvpn (перезаписываем только совпадающие)
 SRC_OPENVPN="$TMP_DIR/etc/openvpn"
 DST_OPENVPN="/etc/openvpn"
 if [ -d "$SRC_OPENVPN" ]; then
-  echo "  Копируем '$SRC_OPENVPN' → '$DST_OPENVPN' (с перезаписью)"
+  echo "  Копируем '$SRC_OPENVPN/' → '$DST_OPENVPN/' (перезаписываем файлы)"
   mkdir -p "$DST_OPENVPN"
   cp -r "$SRC_OPENVPN/"* "$DST_OPENVPN/"
 else
   echo "  ⚠️  Папка '$SRC_OPENVPN' не найдена — проверьте структуру."
 fi
 
-# 5.3) root → /root
+# 5.3) root → /root (бот и скрипты)
 SRC_ROOT="$TMP_DIR/root"
 DST_ROOT="/root"
 if [ -d "$SRC_ROOT" ]; then
-  echo "  Копируем '$SRC_ROOT' → '$DST_ROOT' (с перезаписью)"
+  echo "  Копируем '$SRC_ROOT/' → '$DST_ROOT/' (перезаписываем файлы)"
   cp -r "$SRC_ROOT/"* "$DST_ROOT/"
 else
   echo "  ⚠️  Папка '$SRC_ROOT' не найдена — проверьте структуру."
@@ -156,7 +155,7 @@ for DIR in "${TARGET_DIRS[@]}"; do
   if [ -d "$DIR" ]; then
     FILES=$(grep -RIl '\${FILEVPN_NAME}' "$DIR" || true)
     for f in $FILES; do
-      # Исключаем install.sh в /root, если он там оказался
+      # Исключаем install.sh в /root, если он скопировался
       if [[ "$(basename "$f")" == "install.sh" ]]; then
         continue
       fi
@@ -178,7 +177,7 @@ if [ -d "$VENV_DIR" ]; then
   rm -rf "$VENV_DIR"
 fi
 
-echo "  Создаем виртуальное окружение: python3 -m venv $VENV_DIR"
+echo "  Создаём виртуальное окружение: python3 -m venv $VENV_DIR"
 python3 -m venv "$VENV_DIR"
 
 echo "  Активируем venv и устанавливаем зависимости из /root/requirements.txt"
