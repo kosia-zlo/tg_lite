@@ -371,7 +371,8 @@ async def set_bot_commands():
         await bot.set_my_commands(commands)
 
 
-@dp.callback_query(lambda c: c.data != "send_request"
+@dp.callback_query(lambda c: c.from_user.id != ADMIN_ID
+                          and c.data != "send_request"
                           and not is_approved_user(c.from_user.id)
                           and not is_pending(c.from_user.id))
 async def _deny_unapproved_callback(callback: types.CallbackQuery):
@@ -379,9 +380,7 @@ async def _deny_unapproved_callback(callback: types.CallbackQuery):
         "❌ У вас нет доступа. Чтобы получить VPN, сначала отправьте заявку через /start.",
         show_alert=True
     )
-
-
-
+)
 
 
 @dp.callback_query(lambda c: c.data.startswith("approve_rename_"))
