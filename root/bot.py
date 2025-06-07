@@ -18,7 +18,7 @@ import hashlib
 from aiogram import types
 from asyncio import sleep
 from aiogram.filters import StateFilter
-
+from aiogram.exceptions import TelegramBadRequest
 import sqlite3
 import uuid
 from aiogram.fsm.state import State, StatesGroup
@@ -525,6 +525,19 @@ async def update_bot_description():
 
 BOT_ABOUT = "Вставь свое описание"
 
+def make_users_tab_keyboard(active_tab: str):
+    tabs = [
+        ("Все",        "users_tab_all"),
+        ("🟢 Онлайн",  "users_tab_online"),
+        ("⏳ Истекают", "users_tab_expiring"),
+    ]
+    buttons = []
+    for title, cb in tabs:
+        # подсвечиваем активный таб
+        text = f"» {title} «" if cb == active_tab else title
+        buttons.append(InlineKeyboardButton(text=text, callback_data=cb))
+    return InlineKeyboardMarkup(inline_keyboard=[buttons])
+
 
 async def update_bot_about():
     """Асинхронная функция для обновления раздела «О боте»."""
@@ -903,8 +916,8 @@ async def process_manual_user_id(message: types.Message, state: FSMContext):
         except Exception:
             pass
 
-    # 2) если нажали ❌, отменяем
-    if user_id_text == "❌" or user_id_text.lower() == "отмена":
+    # 2) если нажали ❌ Отмена, отменяем
+    if user_id_text in ("❌", "❌ Отмена", "отмена", "Отмена"):
         await state.clear()
         await delete_last_menus(message.from_user.id)
         stats = get_server_info()
@@ -1047,46 +1060,94 @@ async def process_manual_client_name(message: types.Message, state: FSMContext):
 
     await state.clear()
 
+@dp.callback_query(lambda c: c.data == "users_menu")
+async def users_menu(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        try: await callback.answer("Нет прав!", show_alert=True)
+        except: pass
+        return
+
+    # по-умолчанию открываем вкладку «Все»
+    await show_users_tab(callback.from_user.id, "users_tab_all")
+    try: await callback.answer()
+    except: pass
 
 
 # ==== Список пользователей с эмодзи ====
 @dp.callback_query(lambda c: c.data == "users_menu")
 async def users_menu(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
-        await callback.answer("Нет прав!", show_alert=True)
+        try: await callback.answer("Нет прав!", show_alert=True)
+        except: pass
         return
 
-    clients = await get_clients("openvpn")
-    online = get_online_users_from_log()
-    if not clients:
-        await show_menu(callback.from_user.id, "❌ Нет пользователей.", create_main_menu())
-        return
-    keyboard = []
-    for client in clients:
-        if client == "antizapret-client":
-            continue
-        emoji = ""
-        user_id = get_user_id_by_name(client)
-        if user_id:
-            emoji = get_user_emoji(user_id)
-        online_status = "🟢" if client in online else "🔴"
-        display_name = f"{emoji + ' ' if emoji else ''}{online_status} {client}"
-        if user_id:
-            keyboard.append([
-                InlineKeyboardButton(text=display_name, callback_data=f"manage_userid_{user_id}")
-            ])
+    # по-умолчанию открываем вкладку «Все»
+    await show_users_tab(callback.from_user.id, "users_tab_all")
+    try: await callback.answer()
+    except: pass
+
+async def show_users_tab(chat_id: int, tab: str):
+    # 1) получаем всех клиентов, заодно убираем antizapret-client
+    raw_clients = await get_clients("openvpn")
+    all_clients = [c for c in raw_clients if c != "antizapret-client"]
+
+    # 2) строим множество онлайн-клиентов
+    open_online = set(get_online_users_from_log().keys())
+    wg_online   = set(get_online_wg_peers().keys())
+    online_all  = open_online | wg_online
+
+    # 3) в зависимости от таба выбираем подмножество
+    if tab == "users_tab_all":
+        clients = all_clients
+        header  = "👥 <b>Все пользователи:</b>"
+    elif tab == "users_tab_online":
+        clients = [c for c in all_clients if c in online_all]
+        header  = "🟢 <b>Сейчас онлайн:</b>"
+    else:  # users_tab_expiring
+        clients = []
+        for c in all_clients:
+            uid = get_user_id_by_name(c)
+            info = get_cert_expiry_info(c) if uid else None
+            if info and 0 <= info["days_left"] <= 7:
+                clients.append(c)
+        header = "⏳ <b>Истекают (≤7д):</b>"
+
+    # 2) строим список рядов кнопок
+    rows = []
+    for c in clients:
+        uid   = get_user_id_by_name(c)
+        emoji = get_user_emoji(uid) if uid else ""
+        if tab == "users_tab_expiring":
+            days   = get_cert_expiry_info(c)["days_left"]
+            status = f"⏳{days}д"
         else:
-            keyboard.append([
-                InlineKeyboardButton(text=display_name, callback_data=f"manage_user_{client}")
-            ])
-    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
-    markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    await show_menu(
-        callback.from_user.id,
-        "Список пользователей. Нажмите на пользователя для управления:",
-        markup
-    )
-    await callback.answer()
+            status = "🟢" if c in online_all else "🔴"
+        label = f"{emoji+' ' if emoji else ''}{status} {c}"
+        cb    = f"manage_userid_{uid}" if uid else f"manage_user_{c}"
+        rows.append([InlineKeyboardButton(text=label, callback_data=cb)])
+
+    # 3) добавляем строку табов
+    tab_row = make_users_tab_keyboard(tab).inline_keyboard[0]
+    rows.append(tab_row)
+
+    # 4) добавляем «Назад»
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
+
+    # 5) создаём раз и навсегда новую клаву
+    markup = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    # 6) показываем
+    await show_menu(chat_id, header, markup)
+
+
+@dp.callback_query(lambda c: c.data in {"users_tab_all","users_tab_online","users_tab_expiring"})
+async def on_users_tab(callback: types.CallbackQuery):
+    await show_users_tab(callback.from_user.id, callback.data)
+    try: await callback.answer()
+    except: pass
+
+
+
 
 def create_wg_menu(client_name):
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -1273,10 +1334,6 @@ async def download_wg_config(callback: types.CallbackQuery):
     await callback.answer()
 
 
-
-
-
-
 @dp.callback_query(lambda c: c.data.startswith("download_wg_"))
 async def download_wg_config(callback: types.CallbackQuery):
     parts = callback.data.split("_", 3)
@@ -1453,29 +1510,34 @@ def find_wg_conf(client_name):
 # Новый вариант — по user_id
 @dp.callback_query(lambda c: c.data.startswith("manage_userid_"))
 async def manage_user_by_id(callback: types.CallbackQuery):
-    target_user_id = int(callback.data.split("_", 2)[-1])
+    target_user_id = int(callback.data.split("_")[-1])
     client_name = get_profile_name(target_user_id)
-    if not client_name:
-        await callback.answer("Ошибка: пользователь не найден!", show_alert=True)
-        return
-    await delete_last_menus(callback.from_user.id)
+
     await show_menu(
         callback.from_user.id,
         f"Управление клиентом <b>{client_name}</b>:",
-        create_user_menu(client_name, back_callback="users_menu", is_admin=(callback.from_user.id == ADMIN_ID))
+        create_user_menu(
+            client_name,
+            back_callback="users_menu",
+            is_admin=True,
+            user_id=target_user_id   # <-- передали Telegram-ID
+        )
     )
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data.startswith("manage_user_"))
-async def manage_user(callback: types.CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    await delete_last_menus(user_id)
-    client_name = callback.data.split("_", 2)[-1]
-    await state.update_data(client_name=client_name)  # <= вот это всегда!
+async def manage_user(callback: types.CallbackQuery):
+    client_name = callback.data.split("_",2)[-1]
+    target_user_id = get_user_id_by_name(client_name)
     await show_menu(
-        user_id,
+        callback.from_user.id,
         f"Управление клиентом <b>{client_name}</b>:",
-        create_user_menu(client_name, back_callback="users_menu", is_admin=(user_id == ADMIN_ID))
+        create_user_menu(
+            client_name,
+            back_callback="users_menu",
+            is_admin=(callback.from_user.id == ADMIN_ID),
+            user_id=target_user_id  # <-- здесь
+        )
     )
     await callback.answer()
 
@@ -2053,9 +2115,9 @@ async def process_renew_days(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     data = await state.get_data()
     renew_ids = data.get("renew_msg_ids", [])
-    client_name = data.get("client_name")  # <-- тут всегда получаем имя!
+    client_name = data.get("client_name")
 
-    # Удаляем временные сообщения (например, "Введите срок" и ожидание)
+    # Удаляем все временные сообщения (введите срок, ожидание)
     for mid in set(renew_ids):
         try:
             await bot.delete_message(user_id, mid)
@@ -2066,46 +2128,49 @@ async def process_renew_days(message: types.Message, state: FSMContext):
     text = message.text.strip()
 
     # Обработка отмены
-    if text == "❌ Отмена":
+    if text in ("❌ Отмена", "Отмена", "отмена"):
         await state.clear()
         is_admin = (user_id == ADMIN_ID)
         await show_menu(
             user_id,
             f"Меню пользователя <b>{client_name}</b>:",
-            create_user_menu(client_name, back_callback="users_menu", is_admin=is_admin)
+            create_user_menu(client_name, back_callback="users_menu", is_admin=is_admin, user_id=user_id)
         )
         return
 
     # Проверка на корректность ввода
     if not text.isdigit() or int(text) < 1:
-        m1 = await message.answer("❌ Введи корректное количество дней (целое число)", reply_markup=ReplyKeyboardRemove())
+        warn = await message.answer(
+            "❌ Введи корректное количество дней (целое число > 0)",
+            reply_markup=ReplyKeyboardRemove()
+        )
         await asyncio.sleep(1)
-        try:
-            await m1.delete()
-        except Exception:
-            pass
-        # Возвращаемся в меню пользователя, а не в главное!
+        try: await warn.delete()
+        except: pass
+        # возвращаемся в меню
         is_admin = (user_id == ADMIN_ID)
         await show_menu(
             user_id,
             f"Меню пользователя <b>{client_name}</b>:",
-            create_user_menu(client_name, back_callback="users_menu", is_admin=is_admin)
+            create_user_menu(client_name, back_callback="users_menu", is_admin=is_admin, user_id=user_id)
         )
         await state.clear()
         return
 
     days = int(text)
 
+    # показываем индикатор прогресса
     msg_wait = await message.answer(
-        f"⏳ Устанавливаю новый срок действия для <b>{client_name}</b> — {days} дней...",
+        f"⏳ Устанавливаю новый срок действия для <b>{client_name}</b>: {days} дней...",
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove()
     )
     await state.update_data(renew_msg_ids=[msg_wait.message_id])
 
+    # собственно продление
     result = await execute_script("9", client_name, str(days))
 
-    # Удаляем сообщение ожидания
+    # удаляем индикатор
     try:
         await bot.delete_message(user_id, msg_wait.message_id)
     except Exception:
@@ -2113,13 +2178,31 @@ async def process_renew_days(message: types.Message, state: FSMContext):
     await state.update_data(renew_msg_ids=[])
 
     if result["returncode"] == 0:
+        # получаем новую дату и остаток дней
         cert_info = get_cert_expiry_info(client_name)
         if cert_info:
             date_to_str = cert_info["date_to"].strftime('%d.%m.%Y')
             days_left = cert_info["days_left"]
-            status = f"Сертификат действует до <b>{date_to_str}</b> (осталось <b>{days_left}</b> дней)."
+            status = f"Сертификат будет действовать до <b>{date_to_str}</b> (осталось <b>{days_left}</b> дней)."
         else:
-            status = "Не удалось определить срок действия сертификата."
+            date_to_str = None
+            status = "Не удалось определить точную дату окончания сертификата."
+
+        # ПЕРМАНЕНТНОЕ уведомление юзеру
+        if date_to_str:
+            await bot.send_message(
+                user_id,
+                f"✅ Ваш доступ продлён на <b>{days}</b> дней — до <b>{date_to_str}</b>.\n\n{status}",
+                parse_mode="HTML"
+            )
+        else:
+            await bot.send_message(
+                user_id,
+                f"✅ Ваш доступ продлён на <b>{days}</b> дней.\n\n{status}",
+                parse_mode="HTML"
+            )
+
+        # кратковременный «ок» для админа
         msg_ok = await message.answer(
             f"✅ <b>Срок действия установлен!</b>\n{status}",
             parse_mode="HTML"
@@ -2131,45 +2214,132 @@ async def process_renew_days(message: types.Message, state: FSMContext):
             pass
 
     else:
+        # при ошибке продления
         await message.answer(
             f"❌ Ошибка установки срока: {result['stderr']}",
             parse_mode="HTML"
         )
 
-    # В любом случае выводим одно меню пользователя
+    # возвращаем меню пользователя
     is_admin = (user_id == ADMIN_ID)
     await show_menu(
         user_id,
         f"Меню пользователя <b>{client_name}</b>:",
-        create_user_menu(client_name, back_callback="users_menu", is_admin=is_admin)
+        create_user_menu(client_name, back_callback="users_menu", is_admin=is_admin, user_id=user_id)
     )
     await state.clear()
 
 
 
+
 # ==== Меню управления пользователем (с эмодзи и WG/Amnezia кнопками) ====
-def create_user_menu(client_name, back_callback=None, is_admin=False, user_id=None):
-    emoji = ""
-    if user_id:
-        emoji = get_user_emoji(user_id)
-    menu_title = f"{emoji + ' ' if emoji else ''}{client_name}"
-    keyboard = [
-        [InlineKeyboardButton(text="📊 Статистика", callback_data=f"user_stats_{client_name}")],
-        [InlineKeyboardButton(text="📥 Получить конфиг OpenVPN", callback_data=f"select_openvpn_{client_name}")],
-        [InlineKeyboardButton(text="🌐 Получить WireGuard", callback_data=f"get_wg_{client_name}")],
-        [InlineKeyboardButton(text="🦄 Получить Amnezia", callback_data=f"get_amnezia_{client_name}")],
-        [InlineKeyboardButton(text="📬 Получить VLESS", callback_data=f"get_vless_{client_name}")]
+def create_user_menu(
+    client_name: str,
+    *,
+    back_callback: str | None = None,
+    is_admin: bool = False,
+    user_id: int | None = None
+) -> InlineKeyboardMarkup:
+    """
+    Собирает меню управления для данного клиента.
+    - client_name — название профиля.
+    - back_callback — callback_data кнопки «⬅️ Назад».
+    - is_admin — добавлять ли админские кнопки.
+    - user_id — Telegram-ID клиента (для url-кнопки).
+    """
+
+    keyboard: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text="📊 Статистика",
+                callback_data=f"user_stats_{client_name}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📥 Получить конфиг OpenVPN",
+                callback_data=f"select_openvpn_{client_name}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🌐 Получить WireGuard",
+                callback_data=f"get_wg_{client_name}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🦄 Получить Amnezia",
+                callback_data=f"get_amnezia_{client_name}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📬 Получить VLESS",
+                callback_data=f"get_vless_{client_name}"
+            )
+        ],
     ]
+
     if is_admin:
-        keyboard.append([InlineKeyboardButton(text="✏️ Изменить имя профиля", callback_data=f"rename_profile_{client_name}")])        
-        keyboard.append([InlineKeyboardButton(text="🤡 Установить смайл", callback_data=f"set_emoji_{client_name}")])
-        keyboard.append([InlineKeyboardButton(text="✏️ Установить срок действия", callback_data=f"renew_user_{client_name}")])
-        keyboard.append([InlineKeyboardButton(text="❌ Удалить пользователя", callback_data=f"delete_user_{client_name}")])
+        # админские опции
+        keyboard.append([
+            InlineKeyboardButton(
+                text="✏️ Изменить имя профиля",
+                callback_data=f"rename_profile_{client_name}"
+            )
+        ])
+        keyboard.append([
+            InlineKeyboardButton(
+                text="🤡 Установить смайл",
+                callback_data=f"set_emoji_{client_name}"
+            )
+        ])
+        keyboard.append([
+            InlineKeyboardButton(
+                text="✏️ Установить срок действия",
+                callback_data=f"renew_user_{client_name}"
+            )
+        ])
+        keyboard.append([
+            InlineKeyboardButton(
+                text="❌ Удалить пользователя",
+                callback_data=f"delete_user_{client_name}"
+            )
+        ])
+
+        # кнопка «Перейти в Telegram»
+        if user_id is not None:
+            keyboard.append([
+                InlineKeyboardButton(
+                    text="👤 Перейти в Telegram",
+                    url=f"tg://user?id={user_id}"
+                )
+            ])
+
+        # кнопка «Назад»
         if back_callback:
-            keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)])
+            keyboard.append([
+                InlineKeyboardButton(
+                    text="⬅️ Назад",
+                    callback_data=back_callback
+                )
+            ])
     else:
-        keyboard.append([InlineKeyboardButton(text="💬 Связь с поддержкой", url="https://www.google.com/")])
-        keyboard.append([InlineKeyboardButton(text="ℹ️ Как пользоваться", url="https://www.google.com/")])
+        # для обычного пользователя
+        keyboard.append([
+            InlineKeyboardButton(
+                text="💬 Связь с поддержкой",
+                url="https://www.google.com/"
+            )
+        ])
+        keyboard.append([
+            InlineKeyboardButton(
+                text="ℹ️ Как пользоваться",
+                url="https://www.google.com/"
+            )
+        ])
+
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -2464,15 +2634,43 @@ async def who_online(callback: types.CallbackQuery):
         if client not in merged:
             merged[client] = proto
 
+    # Если никого нет
     if not merged:
+        # Заменяем текущее меню на уведомление
+        try:
+            await callback.message.edit_text("❌ Сейчас нет никого онлайн")
+        except:
+            # если не получилось редактировать, пробуем удалить и отправить новое
+            try:
+                await callback.message.delete()
+                await callback.bot.send_message(user_id, "❌ Сейчас нет никого онлайн")
+            except:
+                pass
+
+        # Выдерживаем 2 секунды
+        await asyncio.sleep(2)
+
+        # Удаляем уведомление
+        # — либо удаляем только что отредаченный message
         try:
             await callback.message.delete()
         except:
+            # если edit_text + delete не сработали, можно попытаться удалить последний
+            # отправленный вами ботом
             pass
-        await bot.send_message(user_id, "❌ Сейчас нет никого онлайн", reply_markup=create_main_menu())
+
+        # Показываем главное меню
+        stats = get_server_info()
+        await callback.bot.send_message(
+            user_id,
+            stats + "\n<b>Главное меню:</b>",
+            reply_markup=create_main_menu(),
+            parse_mode="HTML"
+        )
         await callback.answer()
         return
 
+    # — иначе, если кто-то онлайн, выводим список как раньше:
     try:
         await callback.message.delete()
     except:
@@ -2480,18 +2678,19 @@ async def who_online(callback: types.CallbackQuery):
 
     buttons = []
     text_lines = ["🟢 <b>Кто в сети:</b>"]
-
     for client in merged.keys():
         buttons.append([
             InlineKeyboardButton(text=client, callback_data=f"manage_online_{client}")
         ])
-
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
-
-    text = "\n".join(text_lines)
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    await bot.send_message(user_id, text, parse_mode="HTML", reply_markup=keyboard)
+    await callback.bot.send_message(
+        user_id,
+        "\n".join(text_lines),
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
     await callback.answer()
 
 
@@ -3631,7 +3830,6 @@ async def main():
 async def notify_expiring_users():
     while True:
         try:
-            # Пройдемся по всем одобренным пользователям
             if not os.path.exists(APPROVED_FILE):
                 await asyncio.sleep(12 * 3600)
                 continue
@@ -3649,42 +3847,87 @@ async def notify_expiring_users():
                 if not cert_info:
                     continue
 
-                days_left = cert_info.get("days_left", 0)
-                notified_flag_file = f".notified_{user_id}.flag"
-                if days_left == 5 and not os.path.exists(notified_flag_file):
-                    # Уведомление юзеру
+                days_left = cert_info["days_left"]
+                flag_file = f".notified_{user_id}.flag"
+
+                # ─── Напоминание за 5 дней ───
+                if days_left == 5:
+                    # отправляем только один раз
+                    if not os.path.exists(flag_file):
+                        # уведомляем юзера
+                        try:
+                            await bot.send_message(
+                                user_id_int,
+                                "⚠️ Осталось 5 дней до окончания VPN-сертификата.",
+                                parse_mode="HTML"
+                            )
+                        except Exception:
+                            pass
+                        # уведомляем админа
+                        try:
+                            await bot.send_message(
+                                ADMIN_ID,
+                                f"⚠️ Пользователю <code>{user_id}</code> ({client_name}) отправлено напоминание: осталось 5 дней.",
+                                parse_mode="HTML"
+                            )
+                        except Exception:
+                            pass
+                        # создаём флаг, чтобы не спамить
+                        with open(flag_file, "w") as f_flag:
+                            f_flag.write("notified")
+
+                # ─── После истечения срока ───
+                elif days_left < 0:
+                    # 1) удаляем сертификат/ключи
+                    await execute_script("2", client_name)
+
+                    # 2) снимаем одобрение
+                    remove_approved_user(user_id)
+
+                    # 3) добавляем в pending для повторного одобрения
+                    add_pending(user_id, "", "")
+
+                    # 4) удаляем все открытые меню у юзера
+                    await delete_last_menus(user_id_int)
+
+                    # 5) уведомляем юзера: предлагаем новый запрос
+                    markup = InlineKeyboardMarkup(inline_keyboard=[[
+                        InlineKeyboardButton(text="🚀 Отправить заявку на доступ", callback_data="send_request")
+                    ]])
                     try:
                         await bot.send_message(
                             user_id_int,
-                            "⚠️ <b>Где бабосы? Месяц прошёл почти)</b>\n\n"
-                            "Осталось 5 дней до окончания действия VPN.",
-                            parse_mode="HTML"
+                            "⛔ Срок действия вашего VPN-сертификата истёк.\n\n"
+                            "Для восстановления доступа отправьте новую заявку:",
+                            parse_mode="HTML",
+                            reply_markup=markup
                         )
-                    except Exception as e:
-                        print(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
-                    # Уведомление админу
+                    except Exception:
+                        pass
+
+                    # 6) уведомляем админа
                     try:
                         await bot.send_message(
                             ADMIN_ID,
-                            f"⚠️ Пользователю <code>{user_id}</code> отправлено напоминание о продлении:\n"
-                            "<b>Где бабосы? Месяц прошёл почти)</b>",
+                            f"⚠️ Доступ пользователя <code>{user_id}</code> ({client_name}) снят по истечении срока.",
                             parse_mode="HTML"
                         )
-                    except Exception as e:
-                        print(f"Не удалось отправить уведомление админу: {e}")
-                    # Ставим флаг, чтобы не слать повторно
-                    with open(notified_flag_file, "w") as f:
-                        f.write("notified")
-                # Снимаем флаг, если продлил (например, осталось больше 5 дней)
-                elif days_left > 5 and os.path.exists(notified_flag_file):
+                    except Exception:
+                        pass
+
+                # ─── Если больше 5 дней — сбрасываем флаг, если он есть ───
+                elif days_left > 5 and os.path.exists(flag_file):
                     try:
-                        os.remove(notified_flag_file)
+                        os.remove(flag_file)
                     except Exception:
                         pass
 
         except Exception as e:
             print(f"[notify_expiring_users] Ошибка: {e}")
-        await asyncio.sleep(12 * 3600)  # Проверять 2 раза в сутки (можешь изменить)
+
+        # Проверяем каждые 12 часов
+        await asyncio.sleep(12 * 3600)
+
 
 
 
