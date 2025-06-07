@@ -2056,22 +2056,39 @@ async def renew_user_start(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("Нет доступа!", show_alert=True)
         return
-    client_name = callback.data.split("_", 2)[-1]
-    await state.update_data(client_name=client_name)  # <= обновили!
-    await callback.message.delete()
 
+    client_name = callback.data.split("_", 2)[-1]
+    target_user_id = get_user_id_by_name(client_name)
+    if target_user_id is None:
+        await callback.answer("Пользователь не найден!", show_alert=True)
+        return
+
+    # Сохраняем и client_name, и реальный Telegram-ID пользователя
+    await state.update_data(client_name=client_name, target_user_id=target_user_id)
+
+    # Удаляем старое меню у админа
+    await delete_last_menus(callback.from_user.id)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    # Запрашиваем у админа новый срок
     msg = await bot.send_message(
         callback.from_user.id,
-        f"✏️ <b>Установить срок действия</b>\n\n"
-        f"Введите новый срок действия <b>(в днях)</b> для пользователя <code>{client_name}</code>:\n"
-        f"<b>⚠️ Текущий срок будет заменён новым!</b>\n"
-        f"(после подтверждения)",
+        (
+            f"✏️ <b>Установить срок действия</b>\n\n"
+            f"Введите новый срок действия <b>(в днях)</b> для пользователя <code>{client_name}</code>:\n"
+            f"<b>⚠️ Текущий срок будет заменён новым!</b>"
+        ),
         parse_mode="HTML",
         reply_markup=cancel_markup
     )
+    # Сохраним сообщение для удаления позже
     await state.update_data(renew_msg_ids=[msg.message_id])
     await state.set_state(VPNSetup.entering_days)
     await callback.answer()
+
 
 
 
@@ -2112,122 +2129,110 @@ def get_cert_expiry_info(client_name):
 
 @dp.message(VPNSetup.entering_days)
 async def process_renew_days(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
     data = await state.get_data()
-    renew_ids = data.get("renew_msg_ids", [])
-    client_name = data.get("client_name")
+    admin_id        = message.from_user.id
+    target_user_id  = data.get("target_user_id")
+    client_name     = data.get("client_name")
+    renew_msg_ids   = data.get("renew_msg_ids", [])
 
-    # Удаляем все временные сообщения (введите срок, ожидание)
-    for mid in set(renew_ids):
+    # Удаляем все временные подсказки
+    for mid in set(renew_msg_ids):
         try:
-            await bot.delete_message(user_id, mid)
+            await bot.delete_message(admin_id, mid)
         except Exception:
             pass
     await state.update_data(renew_msg_ids=[])
 
     text = message.text.strip()
-
-    # Обработка отмены
-    if text in ("❌ Отмена", "Отмена", "отмена"):
+    # Если админ отменил
+    if text.lower() in ("❌ отмена", "отмена"):
         await state.clear()
-        is_admin = (user_id == ADMIN_ID)
         await show_menu(
-            user_id,
+            admin_id,
             f"Меню пользователя <b>{client_name}</b>:",
-            create_user_menu(client_name, back_callback="users_menu", is_admin=is_admin, user_id=user_id)
+            create_user_menu(client_name, back_callback="users_menu", is_admin=True, user_id=target_user_id)
         )
         return
 
-    # Проверка на корректность ввода
+    # Проверяем ввод
     if not text.isdigit() or int(text) < 1:
-        warn = await message.answer(
-            "❌ Введи корректное количество дней (целое число > 0)",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        await asyncio.sleep(1)
+        warn = await message.answer("❌ Введите целое число дней (>0)", reply_markup=cancel_markup)
+        await asyncio.sleep(1.5)
         try: await warn.delete()
         except: pass
-        # возвращаемся в меню
-        is_admin = (user_id == ADMIN_ID)
-        await show_menu(
-            user_id,
-            f"Меню пользователя <b>{client_name}</b>:",
-            create_user_menu(client_name, back_callback="users_menu", is_admin=is_admin, user_id=user_id)
-        )
-        await state.clear()
         return
 
     days = int(text)
-
-    # показываем индикатор прогресса
+    # Показываем прогресс-бар админу
     msg_wait = await message.answer(
-        f"⏳ Устанавливаю новый срок действия для <b>{client_name}</b>: {days} дней...",
+        f"⏳ Продление сертификата <b>{client_name}</b> на {days} дней...",
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove()
     )
     await state.update_data(renew_msg_ids=[msg_wait.message_id])
 
-    # собственно продление
+    # Запускаем продление
     result = await execute_script("9", client_name, str(days))
 
-    # удаляем индикатор
+    # Удаляем индикатор
     try:
-        await bot.delete_message(user_id, msg_wait.message_id)
+        await bot.delete_message(admin_id, msg_wait.message_id)
     except Exception:
         pass
-    await state.update_data(renew_msg_ids=[])
+
+    # Готовим статус для обеих сторон
+    cert_info = get_cert_expiry_info(client_name)
+    if cert_info:
+        date_to_str = cert_info["date_to"].strftime('%d.%m.%Y')
+        days_left   = cert_info["days_left"]
+        status_text = f"до <b>{date_to_str}</b> (осталось <b>{days_left}</b> д.)"
+    else:
+        date_to_str = None
+        status_text = "точную дату определить не удалось"
 
     if result["returncode"] == 0:
-        # получаем новую дату и остаток дней
-        cert_info = get_cert_expiry_info(client_name)
-        if cert_info:
-            date_to_str = cert_info["date_to"].strftime('%d.%m.%Y')
-            days_left = cert_info["days_left"]
-            status = f"Сертификат будет действовать до <b>{date_to_str}</b> (осталось <b>{days_left}</b> дней)."
-        else:
-            date_to_str = None
-            status = "Не удалось определить точную дату окончания сертификата."
-
-        # ПЕРМАНЕНТНОЕ уведомление юзеру
+        # 1) уведомляем целевого пользователя
         if date_to_str:
             await bot.send_message(
-                user_id,
-                f"✅ Ваш доступ продлён на <b>{days}</b> дней — до <b>{date_to_str}</b>.\n\n{status}",
+                target_user_id,
+                f"✅ Ваш доступ продлён на <b>{days}</b> дней — {status_text}.",
                 parse_mode="HTML"
             )
         else:
             await bot.send_message(
-                user_id,
-                f"✅ Ваш доступ продлён на <b>{days}</b> дней.\n\n{status}",
+                target_user_id,
+                f"✅ Ваш доступ продлён на <b>{days}</b> дней. {status_text}.",
                 parse_mode="HTML"
             )
 
-        # кратковременный «ок» для админа
-        msg_ok = await message.answer(
-            f"✅ <b>Срок действия установлен!</b>\n{status}",
+        # 2) кратковременное «ОК» для админа
+        msg_ok = await bot.send_message(
+            admin_id,
+            f"✅ Пользователь <b>{client_name}</b> продлён {status_text}.",
             parse_mode="HTML"
         )
-        await asyncio.sleep(1)
+        await asyncio.sleep(1.5)
         try:
-            await msg_ok.delete()
+            await bot.delete_message(admin_id, msg_ok.message_id)
         except Exception:
             pass
 
     else:
-        # при ошибке продления
-        await message.answer(
-            f"❌ Ошибка установки срока: {result['stderr']}",
+        # Ошибка — показываем админу
+        await bot.send_message(
+            admin_id,
+            f"❌ Ошибка продления: {result['stderr']}",
             parse_mode="HTML"
         )
 
-    # возвращаем меню пользователя
-    is_admin = (user_id == ADMIN_ID)
+    # Возвращаем админу в меню управления этим пользователем
     await show_menu(
-        user_id,
+        admin_id,
         f"Меню пользователя <b>{client_name}</b>:",
-        create_user_menu(client_name, back_callback="users_menu", is_admin=is_admin, user_id=user_id)
+        create_user_menu(client_name, back_callback="users_menu", is_admin=True, user_id=target_user_id)
     )
     await state.clear()
+
 
 
 
