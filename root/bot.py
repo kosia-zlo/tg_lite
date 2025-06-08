@@ -2313,15 +2313,6 @@ def create_user_menu(
             )
         ])
 
-        # кнопка «Перейти в Telegram»
-        if user_id is not None:
-            keyboard.append([
-                InlineKeyboardButton(
-                    text="👤 Перейти в Telegram",
-                    url=f"tg://user?id={user_id}"
-                )
-            ])
-
         # кнопка «Назад»
         if back_callback:
             keyboard.append([
