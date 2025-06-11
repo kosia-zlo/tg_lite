@@ -13,7 +13,7 @@ import hashlib
 
 
 import glob
-
+import time
 import hashlib
 from aiogram import types
 from asyncio import sleep
@@ -25,7 +25,8 @@ from aiogram.fsm.state import State, StatesGroup
 
 class SetEmoji(StatesGroup):
     waiting_for_emoji = State()
-    
+
+from collections import deque    
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
@@ -243,14 +244,21 @@ class VPNSetup(StatesGroup):
 
 # Описание для вашего бота
 BOT_DESCRIPTION = """
-Вставь свое описание
+👴🕶️ БичиVPN — bi4i.ru
+
+⚡ VPN-бот для своих:
+— 🧑‍💻 Ебейший VPN который обходит только заблокированные сервисы
+— 🕳️ Генерация конфигов OpenVPN прям в Боте
+— 🧾 Статистика на хуй никому не нужная
+— 🪣 МБ будет Vless позже)
 
 Как получить VPN?
 🪪 Жми /start, отправляй заявку, жди одобрения!
 
+🟣https://bi4i.ru/install/ Инструкция по установке и подключению
 """
 
-BOT_SHORT_DESCRIPTION = "Вставь свое описание"
+BOT_SHORT_DESCRIPTION = "👴🕶️ БичиVPN — приватный VPN за минуту! bi4i.ru"
 
 
 #Для VLESS онлайн убери ниже #, чтоб строка начиналась с def authenticate() -> bool:
@@ -523,7 +531,7 @@ async def update_bot_description():
         await bot.set_my_description(BOT_DESCRIPTION, language_code="ru")
 
 
-BOT_ABOUT = "Вставь свое описание"
+BOT_ABOUT = "Бот для пользования услугами VPN от БичиVPN."
 
 def make_users_tab_keyboard(active_tab: str):
     tabs = [
@@ -1176,7 +1184,7 @@ async def show_info_wg_vpn(callback: types.CallbackQuery):
         "• macOS 🍏\n"
         "• Linux 🐧\n\n"
         "📖 <b>Инструкция по установке:</b>\n"
-        "👉 <a href='https://www.google.com/'>ГУГЛ</a>"
+        "👉 <a href='https://bi4i.ru/install-wg/'>bi4i.ru/install-wg</a>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Скачать конфиг", callback_data=f"download_wg_vpn_{client_name}")],
@@ -1199,7 +1207,7 @@ async def show_info_wg_antizapret(callback: types.CallbackQuery):
         "• Linux 🐧\n\n"
         "🚫 Использует DNS и маршруты обхода блокировок.\n\n"
         "📖 <b>Инструкция по установке:</b>\n"
-        "👉 <a href='https://www.google.com/'>ГУГЛ</a>"
+        "👉 <a href='https://bi4i.ru/install-wg/'>bi4i.ru/install-wg</a>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Скачать конфиг", callback_data=f"download_wg_antizapret_{client_name}")],
@@ -1235,7 +1243,7 @@ async def show_info_am_vpn(callback: types.CallbackQuery):
         "• macOS 🍏\n\n"
         "🧾 Простой запуск через приложение Amnezia.\n\n"
         "📖 <b>Инструкция по установке:</b>\n"
-        "👉 <a href='https://www.google.com/'>ГУГЛ</a>"
+        "👉 <a href='https://bi4i.ru/install-amnezia/'>bi4i.ru/install-amnezia</a>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Скачать конфиг", callback_data=f"download_am_vpn_{client_name}")],
@@ -1255,7 +1263,7 @@ async def show_info_am_antizapret(callback: types.CallbackQuery):
         "• macOS 🍏\n\n"
         "🚫 Использует обход блокировок через Antizapret.\n\n"
         "📖 <b>Инструкция по установке:</b>\n"
-        "👉 <a href='https://www.google.com/'>ГУГЛ</a>"
+        "👉 <a href='https://bi4i.ru/install-amnezia/'>bi4i.ru/install-amnezia</a>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Скачать конфиг", callback_data=f"download_am_antizapret_{client_name}")],
@@ -2130,21 +2138,20 @@ def get_cert_expiry_info(client_name):
 @dp.message(VPNSetup.entering_days)
 async def process_renew_days(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    admin_id        = message.from_user.id
-    target_user_id  = data.get("target_user_id")
-    client_name     = data.get("client_name")
-    renew_msg_ids   = data.get("renew_msg_ids", [])
+    admin_id       = message.from_user.id
+    target_user_id = data.get("target_user_id")
+    client_name    = data.get("client_name")
+    renew_msg_ids  = data.get("renew_msg_ids", [])
 
-    # Удаляем все временные подсказки
+    # Удаляем индикаторы прогресса
     for mid in set(renew_msg_ids):
         try:
             await bot.delete_message(admin_id, mid)
-        except Exception:
+        except:
             pass
     await state.update_data(renew_msg_ids=[])
 
     text = message.text.strip()
-    # Если админ отменил
     if text.lower() in ("❌ отмена", "отмена"):
         await state.clear()
         await show_menu(
@@ -2154,7 +2161,6 @@ async def process_renew_days(message: types.Message, state: FSMContext):
         )
         return
 
-    # Проверяем ввод
     if not text.isdigit() or int(text) < 1:
         warn = await message.answer("❌ Введите целое число дней (>0)", reply_markup=cancel_markup)
         await asyncio.sleep(1.5)
@@ -2163,7 +2169,7 @@ async def process_renew_days(message: types.Message, state: FSMContext):
         return
 
     days = int(text)
-    # Показываем прогресс-бар админу
+    # Показать прогресс
     msg_wait = await message.answer(
         f"⏳ Продление сертификата <b>{client_name}</b> на {days} дней...",
         parse_mode="HTML",
@@ -2171,69 +2177,52 @@ async def process_renew_days(message: types.Message, state: FSMContext):
     )
     await state.update_data(renew_msg_ids=[msg_wait.message_id])
 
-    # Запускаем продление
+    # Выполнить продление
     result = await execute_script("9", client_name, str(days))
 
-    # Удаляем индикатор
+    # Убрать прогресс
     try:
         await bot.delete_message(admin_id, msg_wait.message_id)
-    except Exception:
+    except:
         pass
 
-    # Готовим статус для обеих сторон
+    # Собрать статус сертификата
     cert_info = get_cert_expiry_info(client_name)
     if cert_info:
         date_to_str = cert_info["date_to"].strftime('%d.%m.%Y')
         days_left   = cert_info["days_left"]
         status_text = f"до <b>{date_to_str}</b> (осталось <b>{days_left}</b> д.)"
     else:
-        date_to_str = None
         status_text = "точную дату определить не удалось"
 
     if result["returncode"] == 0:
-        # 1) уведомляем целевого пользователя
-        if date_to_str:
-            await bot.send_message(
-                target_user_id,
-                f"✅ Ваш доступ продлён на <b>{days}</b> дней — {status_text}.",
-                parse_mode="HTML"
-            )
-        else:
-            await bot.send_message(
-                target_user_id,
-                f"✅ Ваш доступ продлён на <b>{days}</b> дней. {status_text}.",
-                parse_mode="HTML"
-            )
-
-        # 2) кратковременное «ОК» для админа
-        msg_ok = await bot.send_message(
+        # Сообщение пользователю
+        await bot.send_message(
+            target_user_id,
+            f"🎉 Поздравляю, твой VPN продлён на <b>{days}</b> дней — {status_text}!",
+            parse_mode="HTML"
+        )
+        # Сообщение админу
+        await bot.send_message(
             admin_id,
             f"✅ Пользователь <b>{client_name}</b> продлён {status_text}.",
             parse_mode="HTML"
         )
-        await asyncio.sleep(1.5)
-        try:
-            await bot.delete_message(admin_id, msg_ok.message_id)
-        except Exception:
-            pass
-
     else:
-        # Ошибка — показываем админу
+        # Ошибка админу
         await bot.send_message(
             admin_id,
             f"❌ Ошибка продления: {result['stderr']}",
             parse_mode="HTML"
         )
 
-    # Возвращаем админу в меню управления этим пользователем
+    # Вернуть админа в меню
     await show_menu(
         admin_id,
         f"Меню пользователя <b>{client_name}</b>:",
         create_user_menu(client_name, back_callback="users_menu", is_admin=True, user_id=target_user_id)
     )
     await state.clear()
-
-
 
 
 
@@ -2326,13 +2315,13 @@ def create_user_menu(
         keyboard.append([
             InlineKeyboardButton(
                 text="💬 Связь с поддержкой",
-                url="https://www.google.com/"
+                url="https://t.me/vatakatru"
             )
         ])
         keyboard.append([
             InlineKeyboardButton(
                 text="ℹ️ Как пользоваться",
-                url="https://www.google.com/"
+                url="https://bi4i.ru/install/"
             )
         ])
 
@@ -2543,78 +2532,79 @@ async def send_single_config(chat_id: int, path: str, caption: str):
 
 #Кто онлайн
 def get_online_users_from_log():
-    log_files = [
+    """
+    Собирает CLIENT_LIST из всех четырёх status-файлов OpenVPN
+    и возвращает всех реально подключённых клиентов.
+    """
+    status_files = [
         "/etc/openvpn/server/logs/antizapret-tcp-status.log",
         "/etc/openvpn/server/logs/antizapret-udp-status.log",
         "/etc/openvpn/server/logs/vpn-tcp-status.log",
         "/etc/openvpn/server/logs/vpn-udp-status.log",
     ]
     users = {}  # client_name -> "OpenVPN"
-    for log_path in log_files:
-        proto = "OpenVPN"  # и antizapret, и vpn – это OpenVPN
-        try:
-            if os.path.exists(log_path):
-                with open(log_path) as f:
-                    for line in f:
-                        if line.startswith("CLIENT_LIST"):
-                            parts = line.strip().split(",")
-                            if len(parts) > 1:
-                                name = parts[1]
-                                if name not in users:
-                                    users[name] = proto
-        except Exception as e:
-            print(f"Ошибка чтения лога {log_path}: {e}")
-    return users  # вернёт {client_name: "OpenVPN"}
+
+    for path in status_files:
+        if not os.path.exists(path):
+            continue
+        with open(path) as f:
+            for line in f:
+                # CLIENT_LIST — это все живые сессии в момент снимка
+                if not line.startswith("CLIENT_LIST,"):
+                    continue
+                parts = line.strip().split(",")
+                if len(parts) >= 2 and parts[1]:
+                    users[parts[1]] = "OpenVPN"
+
+    return users
 
 def get_online_wg_peers():
     """
-    Получаем список соединённых WG-peer’ов (и Amnezia, и обычный WG).
-    Различаем по месту хранения конфига: 
-      - если pubkey найден в /root/antizapret/client/amneziawg → "Amnezia"
-      - иначе, если найден в /root/antizapret/client/wireguard → "WG"
+    Возвращает всех реально подключённых WireGuard/Amnezia-клиентов:
+    берём только те строки wg show all latest-handshakes, где
+    ts != 0, и сопоставляем pubkey→client по .conf-файлам.
     """
     peers = {}
     try:
-        result = subprocess.run(
+        out = subprocess.run(
             ["wg", "show", "all", "latest-handshakes"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True
-        )
-        for line in result.stdout.splitlines():
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+        ).stdout
+        for line in out.splitlines():
             parts = line.split()
+            # пропускаем всё, что не “<pubkey> <timestamp>”
             if len(parts) != 2:
                 continue
             pubkey, ts = parts
             if ts == "0":
-                continue  # нет активного handshakes
-            # Поиск в Amnezia (amneziawg)
-            found = False
-            for root_dir, proto_label in [
+                continue
+
+            # ищем, в каком .conf встречается этот pubkey
+            for base_dir, label in [
                 ("/root/antizapret/client/amneziawg", "Amnezia"),
                 ("/root/antizapret/client/wireguard", "WG")
             ]:
-                for root, _, files in os.walk(root_dir):
-                    for fname in files:
-                        fpath = os.path.join(root, fname)
+                found = False
+                for root, _, files in os.walk(base_dir):
+                    for fn in files:
+                        if not fn.endswith(".conf"):
+                            continue
                         try:
-                            with open(fpath, encoding="utf-8", errors="ignore") as cf:
+                            with open(os.path.join(root, fn), encoding="utf-8", errors="ignore") as cf:
                                 if pubkey in cf.read():
-                                    # Имя клиента — часть имени файла после последнего тире
-                                    client_name = fname.rsplit("-", 1)[-1].rsplit(".", 1)[0]
-                                    if client_name not in peers:
-                                        peers[client_name] = proto_label
+                                    client = fn.rsplit("-", 1)[-1].rsplit(".", 1)[0]
+                                    peers[client] = label
                                     found = True
                                     break
-                        except:
-                            continue
+                        except Exception:
+                            pass
                     if found:
                         break
                 if found:
                     break
     except Exception as e:
-        print(f"Ошибка при проверке WG: {e}")
-    return peers  # вернёт {client_name: "WG" или "Amnezia"}
+        print(f"[ERROR] wg show: {e}")
+    return peers
 
 @dp.callback_query(lambda c: c.data == "who_online")
 async def who_online(callback: types.CallbackQuery):
@@ -2889,7 +2879,7 @@ async def send_vless_link(callback: types.CallbackQuery):
         # 4) Формируем итоговый текст, вставляя ссылку
         text = (
             "<b>📖 Инструкция по установке VLESS:</b>\n"
-            "👉 <a href=\"https://www.google.com/\">ГУГЛ</a>\n\n"
+            "👉 <a href=\"https://bi4i.ru/install-vless/\">bi4i.ru/install-vless</a>\n\n"
             "🔐 <b>Ваша персональная ссылка для подключения:</b>\n"
             f"<code>{vless_link}</code>\n\n"
             "📱 <b>Android</b>: v2rayNG, NekoBox, v2RayTun\n"
@@ -3298,7 +3288,7 @@ async def select_openvpn_config(callback: types.CallbackQuery):
         "• macOS 🍏\n"
         "• Linux 🐧\n\n"
         "📖 <b>Инструкция по установке:</b>\n"
-        "👉 <a href=\"https://www.google.com/\">ГУГЛ</a>"
+        "👉 <a href=\"https://bi4i.ru/install/\">bi4i.ru/install</a>"
     )
     
     markup = InlineKeyboardMarkup(inline_keyboard=[
@@ -3815,13 +3805,6 @@ async def process_application(callback: types.CallbackQuery, state: FSMContext):
 
 
 
-# ==== Старт бота ====
-async def main():
-    print("✅ Бот успешно запущен!")
-    # ... update_bot_description(), update_bot_about(), set_bot_commands()
-    await dp.start_polling(bot)
-
-
 
 async def notify_expiring_users():
     while True:
@@ -3844,85 +3827,161 @@ async def notify_expiring_users():
                     continue
 
                 days_left = cert_info["days_left"]
-                flag_file = f".notified_{user_id}.flag"
+                # флаг для конкретного дня, чтобы не спамить
+                flag_file = f".notified_{user_id}_{days_left}.flag"
 
-                # ─── Напоминание за 5 дней ───
-                if days_left == 5:
-                    # отправляем только один раз
+                # Напоминания за 5,4,3,2,1 день
+                if 1 <= days_left <= 5:
                     if not os.path.exists(flag_file):
-                        # уведомляем юзера
+                        # 1) отправляем пользователю
                         try:
                             await bot.send_message(
                                 user_id_int,
-                                "⚠️ Осталось 5 дней до окончания VPN-сертификата.",
+                                f"⚠️ Осталось {days_left} дн. до окончания VPN-сертификата.",
                                 parse_mode="HTML"
                             )
-                        except Exception:
+                        except:
                             pass
-                        # уведомляем админа
+                        # 2) администратору
                         try:
                             await bot.send_message(
                                 ADMIN_ID,
-                                f"⚠️ Пользователю <code>{user_id}</code> ({client_name}) отправлено напоминание: осталось 5 дней.",
+                                f"⚠️ Пользователю <code>{user_id_int}</code> ({client_name}) осталось {days_left} дн.",
                                 parse_mode="HTML"
                             )
-                        except Exception:
+                        except:
                             pass
-                        # создаём флаг, чтобы не спамить
+                        # 3) флаг, чтобы не повторять за этот день
                         with open(flag_file, "w") as f_flag:
                             f_flag.write("notified")
 
-                # ─── После истечения срока ───
+                # После истечения срока
                 elif days_left < 0:
-                    # 1) удаляем сертификат/ключи
-                    await execute_script("2", client_name)
+                    await revoke_and_cleanup(client_name, user_id_int)
 
-                    # 2) снимаем одобрение
-                    remove_approved_user(user_id)
-
-                    # 3) добавляем в pending для повторного одобрения
-                    add_pending(user_id, "", "")
-
-                    # 4) удаляем все открытые меню у юзера
-                    await delete_last_menus(user_id_int)
-
-                    # 5) уведомляем юзера: предлагаем новый запрос
-                    markup = InlineKeyboardMarkup(inline_keyboard=[[
-                        InlineKeyboardButton(text="🚀 Отправить заявку на доступ", callback_data="send_request")
-                    ]])
-                    try:
-                        await bot.send_message(
-                            user_id_int,
-                            "⛔ Срок действия вашего VPN-сертификата истёк.\n\n"
-                            "Для восстановления доступа отправьте новую заявку:",
-                            parse_mode="HTML",
-                            reply_markup=markup
-                        )
-                    except Exception:
-                        pass
-
-                    # 6) уведомляем админа
-                    try:
-                        await bot.send_message(
-                            ADMIN_ID,
-                            f"⚠️ Доступ пользователя <code>{user_id}</code> ({client_name}) снят по истечении срока.",
-                            parse_mode="HTML"
-                        )
-                    except Exception:
-                        pass
-
-                # ─── Если больше 5 дней — сбрасываем флаг, если он есть ───
-                elif days_left > 5 and os.path.exists(flag_file):
-                    try:
-                        os.remove(flag_file)
-                    except Exception:
-                        pass
+                # Если более 5 дней — сбросить все флаги
+                elif days_left > 5:
+                    for fn in os.listdir():
+                        if fn.startswith(f".notified_{user_id}_") and fn.endswith(".flag"):
+                            try:
+                                os.remove(fn)
+                            except:
+                                pass
 
         except Exception as e:
             print(f"[notify_expiring_users] Ошибка: {e}")
 
-        # Проверяем каждые 12 часов
         await asyncio.sleep(12 * 3600)
+
+
+async def revoke_and_cleanup(client_name: str, user_id_int: int):
+    """
+    Отзывает сертификат client_name, обновляет CRL,
+    обновляет OpenVPN, удаляет WireGuard-peer,
+    чистит конфиги, переводит пользователя в pending
+    и уведомляет его и администратора.
+    """
+    # 1) revoke + gen-crl через Easy-RSA
+    easyrsa = "/etc/openvpn/easyrsa3/easyrsa"
+    subprocess.run([easyrsa, "--batch", "revoke", client_name], check=True)
+    subprocess.run([easyrsa, "gen-crl"],                    check=True)
+
+    # 2) скопировать новый CRL в место, где его ждёт OpenVPN
+    src_crl = "/etc/openvpn/easyrsa3/pki/crl.pem"
+    dst_crl = "/etc/openvpn/server/keys/crl.pem"
+    shutil.copy(src_crl, dst_crl)
+    os.chmod(dst_crl, 0o644)
+
+    # 3) мягко перечитать CRL – SIGUSR1 всем openvpn-процессам
+    subprocess.run(["pkill", "-USR1", "openvpn"], check=True)
+
+    # 4) удалить WireGuard-peer
+    pubkey = get_pubkey_for_client(client_name)
+    if pubkey:
+        subprocess.run(["wg", "set", "wg0", "peer", pubkey, "remove"], check=True)
+
+    # 5) очистить все клиентские конфиги (OpenVPN, WireGuard, VLESS)
+    cleanup_configs_for_client(client_name)
+
+    # 6) снять одобрение и перевести в pending
+    remove_approved_user(user_id_int)
+    add_pending(user_id_int, "", "")
+
+    # 7) удалить все открытые меню у пользователя
+    await delete_last_menus(user_id_int)
+
+    # 8) уведомить пользователя
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Отправить заявку на доступ", callback_data="send_request")]
+    ])
+    try:
+        await bot.send_message(
+            user_id_int,
+            "⛔ Срок действия вашего VPN-сертификата истёк.\n\n"
+            "Для восстановления доступа отправьте новую заявку:",
+            parse_mode="HTML",
+            reply_markup=markup
+        )
+    except:
+        pass
+
+    # 9) уведомить администратора
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"⚠️ Доступ пользователя <code>{user_id_int}</code> ({client_name}) снят по истечении срока.",
+            parse_mode="HTML"
+        )
+    except:
+        pass
+
+
+def get_pubkey_for_client(client_name: str) -> str | None:
+    """
+    Ищет публичный ключ клиента client_name
+    в конфиге WireGuard/AmneziaWG и возвращает его.
+    """
+    for base in ["/root/antizapret/client/wireguard",
+                 "/root/antizapret/client/amneziawg"]:
+        for root, _, files in os.walk(base):
+            for fname in files:
+                if client_name in fname and fname.endswith(".conf"):
+                    path = os.path.join(root, fname)
+                    try:
+                        with open(path, encoding="utf-8") as cf:
+                            for line in cf:
+                                if line.strip().startswith("PublicKey"):
+                                    return line.split("=", 1)[1].strip()
+                    except:
+                        continue
+    return None
+
+
+def cleanup_configs_for_client(client_name: str):
+    """
+    Удаляет все конфиги OpenVPN, WireGuard и VLESS,
+    связанные с client_name.
+    """
+    patterns = [
+        "/root/antizapret/client/openvpn/**/*{cn}*.ovpn",
+        "/root/antizapret/client/wireguard/**/*{cn}*.conf",
+        "/root/antizapret/client/amneziawg/**/*{cn}*.conf",
+        "/root/vless-configs/{cn}.txt",
+    ]
+    for pat in patterns:
+        for path in glob.glob(pat.format(cn=client_name), recursive=True):
+            try:
+                os.remove(path)
+            except:
+                pass
+
+
+# ==== Старт бота ====
+async def main():
+    print("✅ Бот успешно запущен!")
+    asyncio.create_task(notify_expiring_users())
+    await set_bot_commands()
+    await dp.start_polling(bot)
 
 
 
