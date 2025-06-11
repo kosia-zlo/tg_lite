@@ -2620,32 +2620,21 @@ async def who_online(callback: types.CallbackQuery):
         if client not in merged:
             merged[client] = proto
 
-    # Если никого нет
+    # Если никого нет — уведомляем и возвращаем в главное меню
     if not merged:
-        # Заменяем текущее меню на уведомление
         try:
             await callback.message.edit_text("❌ Сейчас нет никого онлайн")
         except:
-            # если не получилось редактировать, пробуем удалить и отправить новое
             try:
                 await callback.message.delete()
                 await callback.bot.send_message(user_id, "❌ Сейчас нет никого онлайн")
             except:
                 pass
-
-        # Выдерживаем 2 секунды
         await asyncio.sleep(2)
-
-        # Удаляем уведомление
-        # — либо удаляем только что отредаченный message
         try:
             await callback.message.delete()
         except:
-            # если edit_text + delete не сработали, можно попытаться удалить последний
-            # отправленный вами ботом
             pass
-
-        # Показываем главное меню
         stats = get_server_info()
         await callback.bot.send_message(
             user_id,
@@ -2656,21 +2645,31 @@ async def who_online(callback: types.CallbackQuery):
         await callback.answer()
         return
 
-    # — иначе, если кто-то онлайн, выводим список как раньше:
+    # Удаляем старое меню
     try:
         await callback.message.delete()
     except:
         pass
 
+    # Строим новое с кнопками и смайликами пользователей
     buttons = []
     text_lines = ["🟢 <b>Кто в сети:</b>"]
     for client in merged.keys():
+        # Получаем Telegram-ID пользователя по имени профиля
+        uid = get_user_id_by_name(client)
+        # Подтягиваем смайлик (или пустую строку, если не задан)
+        emoji = get_user_emoji(uid) if uid else ""
+        # Склеиваем метку кнопки
+        label = f"{emoji + ' ' if emoji else ''}{client}"
         buttons.append([
-            InlineKeyboardButton(text=client, callback_data=f"manage_online_{client}")
+            InlineKeyboardButton(text=label, callback_data=f"manage_online_{client}")
         ])
+
+    # Кнопка "Назад"
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
+    # Отправляем сообщение
     await callback.bot.send_message(
         user_id,
         "\n".join(text_lines),
@@ -2678,6 +2677,7 @@ async def who_online(callback: types.CallbackQuery):
         reply_markup=keyboard
     )
     await callback.answer()
+
 
 
 
