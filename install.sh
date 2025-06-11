@@ -133,11 +133,28 @@ if [ -d "$SRC_OPENVPN" ]; then
   echo "  Копируем '$SRC_OPENVPN' → '$DST_OPENVPN'"
   mkdir -p "$DST_OPENVPN"
   cp -r "$SRC_OPENVPN/"* "$DST_OPENVPN/"
+
+  # 6.3) Копирование пользовательских серверных конфигов OpenVPN → /etc/openvpn/server
+  echo "  Копируем серверные конфиги OpenVPN → /etc/openvpn/server"
+  mkdir -p /etc/openvpn/server
+  # защита на случай отсутствия конфигов
+  shopt -s nullglob
+  for src in "$TMP_DIR/etc/openvpn/server/"*.conf; do
+    cp "$src" /etc/openvpn/server/
+  done
+  shopt -u nullglob
+
+  # Подставляем FILEVPN_NAME и выставляем права
+  for f in /etc/openvpn/server/*.conf; do
+    sed -i "s|\${FILEVPN_NAME}|${FILEVPN_NAME}|g" "$f" || true
+    chmod 644 "$f"
+    echo "    Настроен и права 644: $f"
+  done
 else
   echo "  ⚠️  Папка '$SRC_OPENVPN' не найдена."
 fi
 
-# 6.3) root → /root
+# 6.4) root → /root
 SRC_ROOT="$TMP_DIR/root"
 DST_ROOT="/root"
 if [ -d "$SRC_ROOT" ]; then
