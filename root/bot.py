@@ -244,21 +244,12 @@ class VPNSetup(StatesGroup):
 
 # Описание для вашего бота
 BOT_DESCRIPTION = """
-👴🕶️ БичиVPN — bi4i.ru
-
-⚡ VPN-бот для своих:
-— 🧑‍💻 Ебейший VPN который обходит только заблокированные сервисы
-— 🕳️ Генерация конфигов OpenVPN прям в Боте
-— 🧾 Статистика на хуй никому не нужная
-— 🪣 МБ будет Vless позже)
-
-Как получить VPN?
+Для своих
 🪪 Жми /start, отправляй заявку, жди одобрения!
 
-🟣https://bi4i.ru/install/ Инструкция по установке и подключению
 """
 
-BOT_SHORT_DESCRIPTION = "👴🕶️ БичиVPN — приватный VPN за минуту! bi4i.ru"
+BOT_SHORT_DESCRIPTION = "Приватный!
 
 
 #Для VLESS онлайн убери ниже #, чтоб строка начиналась с def authenticate() -> bool:
@@ -531,7 +522,7 @@ async def update_bot_description():
         await bot.set_my_description(BOT_DESCRIPTION, language_code="ru")
 
 
-BOT_ABOUT = "Бот для пользования услугами VPN от БичиVPN."
+BOT_ABOUT = "Бот для пользования услугами VPN."
 
 def make_users_tab_keyboard(active_tab: str):
     tabs = [
@@ -1184,7 +1175,7 @@ async def show_info_wg_vpn(callback: types.CallbackQuery):
         "• macOS 🍏\n"
         "• Linux 🐧\n\n"
         "📖 <b>Инструкция по установке:</b>\n"
-        "👉 <a href='https://bi4i.ru/install-wg/'>bi4i.ru/install-wg</a>"
+        "👉 <a href=https://kosia-zlo.github.io/mysite/faq.html/'>https://kosia-zlo.github.io/mysite/faq.html</a>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Скачать конфиг", callback_data=f"download_wg_vpn_{client_name}")],
@@ -1207,7 +1198,7 @@ async def show_info_wg_antizapret(callback: types.CallbackQuery):
         "• Linux 🐧\n\n"
         "🚫 Использует DNS и маршруты обхода блокировок.\n\n"
         "📖 <b>Инструкция по установке:</b>\n"
-        "👉 <a href='https://bi4i.ru/install-wg/'>bi4i.ru/install-wg</a>"
+        "👉 <a href='https://kosia-zlo.github.io/mysite/faq.html'>https://kosia-zlo.github.io/mysite/faq.html</a>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Скачать конфиг", callback_data=f"download_wg_antizapret_{client_name}")],
@@ -1243,7 +1234,7 @@ async def show_info_am_vpn(callback: types.CallbackQuery):
         "• macOS 🍏\n\n"
         "🧾 Простой запуск через приложение Amnezia.\n\n"
         "📖 <b>Инструкция по установке:</b>\n"
-        "👉 <a href='https://bi4i.ru/install-amnezia/'>bi4i.ru/install-amnezia</a>"
+        "👉 <a href='https://kosia-zlo.github.io/mysite/faq.html'>https://kosia-zlo.github.io/mysite/faq.html</a>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Скачать конфиг", callback_data=f"download_am_vpn_{client_name}")],
@@ -1263,7 +1254,7 @@ async def show_info_am_antizapret(callback: types.CallbackQuery):
         "• macOS 🍏\n\n"
         "🚫 Использует обход блокировок через Antizapret.\n\n"
         "📖 <b>Инструкция по установке:</b>\n"
-        "👉 <a href='https://bi4i.ru/install-amnezia/'>bi4i.ru/install-amnezia</a>"
+        "👉 <a href='https://kosia-zlo.github.io/mysite/faq.html'>https://kosia-zlo.github.io/mysite/faq.html</a>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Скачать конфиг", callback_data=f"download_am_antizapret_{client_name}")],
@@ -2315,13 +2306,13 @@ def create_user_menu(
         keyboard.append([
             InlineKeyboardButton(
                 text="💬 Связь с поддержкой",
-                url="https://t.me/vatakatru"
+                url="https://kosia-zlo.github.io/mysite/"
             )
         ])
         keyboard.append([
             InlineKeyboardButton(
                 text="ℹ️ Как пользоваться",
-                url="https://bi4i.ru/install/"
+                url="https://kosia-zlo.github.io/mysite/faq.html"
             )
         ])
 
@@ -2879,7 +2870,7 @@ async def send_vless_link(callback: types.CallbackQuery):
         # 4) Формируем итоговый текст, вставляя ссылку
         text = (
             "<b>📖 Инструкция по установке VLESS:</b>\n"
-            "👉 <a href=\"https://bi4i.ru/install-vless/\">bi4i.ru/install-vless</a>\n\n"
+            "👉 <a href=\"https://kosia-zlo.github.io/mysite/faq.html/\">https://kosia-zlo.github.io/mysite/faq.html</a>\n\n"
             "🔐 <b>Ваша персональная ссылка для подключения:</b>\n"
             f"<code>{vless_link}</code>\n\n"
             "📱 <b>Android</b>: v2rayNG, NekoBox, v2RayTun\n"
@@ -3288,7 +3279,7 @@ async def select_openvpn_config(callback: types.CallbackQuery):
         "• macOS 🍏\n"
         "• Linux 🐧\n\n"
         "📖 <b>Инструкция по установке:</b>\n"
-        "👉 <a href=\"https://bi4i.ru/install/\">bi4i.ru/install</a>"
+        "👉 <a href=\"https://kosia-zlo.github.io/mysite/faq.html"
     )
     
     markup = InlineKeyboardMarkup(inline_keyboard=[
