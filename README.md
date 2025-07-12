@@ -17,7 +17,7 @@
 
 Установка простая/ Важно! Перед установкой обязательно установите https://github.com/GubernievS/AntiZapret-VPN
 ```
-bash <(wget --no-hsts -qO- https://github.com/kosia-zlo/tg_lite/blob/main/install.sh)
+bash <(wget --no-hsts -qO- https://raw.githubusercontent.com/kosia-zlo/tg_lite/main/install.sh )
 ```
 
 - Для VLESS ONLINE. Раскоментируйте все строки
