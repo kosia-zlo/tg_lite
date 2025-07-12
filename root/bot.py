@@ -3271,16 +3271,16 @@ async def select_openvpn_config(callback: types.CallbackQuery):
     client_name = callback.data.replace("select_openvpn_", "")
     
     text = (
-        "🔐 <b>OpenVPN — выбор конфигурации:</b>\n\n"
-        "📱 Поддерживаемые устройства:\n"
-        "• Android 🤖\n"
-        "• iOS 🍎\n"
-        "• Windows 💻\n"
-        "• macOS 🍏\n"
-        "• Linux 🐧\n\n"
-        "📖 <b>Инструкция по установке:</b>\n"
-        "👉 <a href=\"https://kosia-zlo.github.io/mysite/faq.html"
-    )
+    "🔐 <b>OpenVPN — выбор конфигурации:</b>\n\n"
+    "📱 Поддерживаемые устройства:\n"
+    "• Android 🤖\n"
+    "• iOS 🍎\n"
+    "• Windows 💻\n"
+    "• macOS 🍏\n"
+    "• Linux 🐧\n\n"
+    "📖 <b>Инструкция по установке:</b>\n"
+    "👉 <a href=\"https://kosia-zlo.github.io/mysite/faq.html \">Как установить OpenVPN</a>"
+)
     
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Обычный VPN", callback_data=f"download_openvpn_vpn_{client_name}")],
