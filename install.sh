@@ -95,6 +95,8 @@ echo
 TMP_DIR="/tmp/antizapret-install"
 GIT_URL="https://github.com/kosia-zlo/tg_lite.git"
 BRANCH="main"
+wget -O /root/update.sh https://raw.githubusercontent.com/kosia-zlo/tg_lite/main/update.sh 
+chmod +x /root/update.sh
 
 if [ -d "$TMP_DIR" ]; then
   echo "Удаляем старую временную папку $TMP_DIR"
