@@ -249,7 +249,7 @@ BOT_DESCRIPTION = """
 
 """
 
-BOT_SHORT_DESCRIPTION = "Приватный!
+BOT_SHORT_DESCRIPTION = "Приватный!"
 
 
 #Для VLESS онлайн убери ниже #, чтоб строка начиналась с def authenticate() -> bool:
